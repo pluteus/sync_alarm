@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>同期アラーム</title>
+<meta name="description" content="複数端末で時刻が同期して一斉に鳴り、1台で止めると全部止まる起床アラーム（Firebase版）">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b1020">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --bg:#0b1020; --panel:#151b31; --panel2:#1c2440; --line:#2a3357;
+    --text:#eef1ff; --muted:#9aa5c9; --accent:#ffb020; --accent2:#ff7847;
+    --ok:#39d98a; --danger:#ff5470; --radius:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;}
+  body{max-width:640px;margin:0 auto;padding:16px 14px 48px;}
+  h1{font-size:20px;margin:4px 0 2px;display:flex;align-items:center;gap:8px}
+  h2{font-size:16px;margin:22px 0 8px;color:var(--accent)}
+  .sub{color:var(--muted);font-size:12.5px;line-height:1.6}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin:12px 0}
+  .clock{font-size:64px;font-weight:800;text-align:center;letter-spacing:1px;line-height:1.05;font-variant-numeric:tabular-nums}
+  .dateline{text-align:center;color:var(--muted);font-size:14px;margin-top:2px}
+  .next{text-align:center;margin-top:8px;font-size:14.5px;color:var(--accent)}
+  button{font:inherit;border:0;border-radius:12px;padding:12px 16px;background:var(--panel2);
+    color:var(--text);border:1px solid var(--line);cursor:pointer}
+  button.primary{background:var(--accent);color:#231600;font-weight:700;border-color:transparent}
+  button.warn{background:var(--accent2);color:#fff;font-weight:700;border-color:transparent}
+  button.danger{background:var(--danger);color:#fff;font-weight:700;border-color:transparent}
+  button:disabled{opacity:.45}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row>*{flex:1}
+  input,select,textarea{font:inherit;background:#0e1430;color:var(--text);border:1px solid var(--line);
+    border-radius:10px;padding:10px;width:100%}
+  textarea{min-height:110px;font-size:12px;font-family:ui-monospace,monospace}
+  label{font-size:12.5px;color:var(--muted);display:block;margin:8px 0 4px}
+  .alarm{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line)}
+  .alarm:last-child{border-bottom:0}
+  .alarm .time{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums}
+  .alarm .meta{flex:1;min-width:0}
+  .alarm .label{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .alarm .days{font-size:11.5px;color:var(--muted)}
+  .switch{position:relative;width:52px;height:30px;flex:none}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:#39406b;border-radius:999px;transition:.2s}
+  .slider:before{content:"";position:absolute;width:24px;height:24px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  .switch input:checked + .slider{background:var(--ok)}
+  .switch input:checked + .slider:before{transform:translateX(22px)}
+  .iconbtn{flex:none;padding:8px 10px;font-size:13px}
+  .dev{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--line);font-size:14px}
+  .dev:last-child{border-bottom:0}
+  .dot{width:10px;height:10px;border-radius:50%;background:#555f8a;flex:none}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dev .when{margin-left:auto;color:var(--muted);font-size:11.5px}
+  .msg{background:#12261c;border:1px solid #1f5138;color:#b9f4d4;border-radius:12px;padding:10px 12px;font-size:13.5px;margin:10px 0;display:none}
+  .msg.show{display:block}
+  .note{background:#2a2113;border:1px solid #5c4517;color:#ffe1a8;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.7;margin:10px 0}
+  .hidden{display:none !important}
+  .daypick{display:flex;gap:6px;flex-wrap:wrap}
+  .daypick label{margin:0}
+  .daypick input{display:none}
+  .daypick span{display:inline-block;padding:7px 11px;border:1px solid var(--line);border-radius:999px;font-size:13px;color:var(--muted);cursor:pointer}
+  .daypick input:checked + span{background:var(--accent);color:#231600;font-weight:700;border-color:transparent}
+  /* 鳴動オーバーレイ */
+  #ringOverlay{position:fixed;inset:0;background:#160b00;z-index:50;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center}
+  #ringOverlay.show{display:flex;animation:flash 1s infinite}
+  @keyframes flash{0%,100%{background:#160b00}50%{background:#3a1503}}
+  #ringOverlay .rtime{font-size:84px;font-weight:900;font-variant-numeric:tabular-nums}
+  #ringOverlay .rlabel{font-size:20px;color:var(--accent)}
+  #ringOverlay .test{display:none;background:var(--accent);color:#231600;font-weight:800;padding:4px 14px;border-radius:999px}
+  #ringOverlay.test .test{display:block}
+  #stopBtn{font-size:22px;padding:20px 54px;border-radius:999px}
+  #snoozeBtn{font-size:16px;padding:13px 30px;border-radius:999px}
+  .foot{color:var(--muted);font-size:11.5px;text-align:center;margin-top:26px;line-height:1.7}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<h1>⏰ 同期アラーム</h1>
+<div class="sub">複数端末で一斉に鳴って、1台で止めると全部止まる起床アラーム（Firebase版）</div>
+
+<!-- 初期設定 -->
+<section id="setupView" class="hidden">
+  <div class="card">
+    <h2 style="margin-top:0">初期設定（端末ごとに1回）</h2>
+    <p class="sub">Firebaseコンソールでコピーした <b>firebaseConfig</b> を貼り付けてください。設定はこの端末の中にだけ保存され、ソースコードやGitHubには含まれません。手順は README を見てください。</p>
+    <label>firebaseConfig</label>
+    <textarea id="configInput" placeholder='const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", ... }'></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="saveConfigBtn">保存して始める</button>
+    </div>
+    <p class="sub" id="configError" style="color:var(--danger)"></p>
+  </div>
+</section>
+
+<!-- ログイン -->
+<section id="authView" class="hidden">
+  <div class="card">
+    <h2 style="margin-top:0">ログイン</h2>
+    <p class="sub">全端末で<b>同じGoogleアカウント</b>でログインすると、そのアカウントが同期グループになります。ルームコードは要りません。</p>
+    <div class="row">
+      <button class="primary" id="loginPopupBtn">Googleでログイン</button>
+      <button id="loginRedirectBtn">うまくいかない場合はこちら</button>
+    </div>
+    <p class="sub" id="authError" style="color:var(--danger)"></p>
+  </div>
+</section>
+
+<!-- メイン -->
+<section id="mainView" class="hidden">
+  <div class="card">
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="dateline" id="dateline">読み込み中…</div>
+    <div class="next" id="nextAlarm">次のアラームはありません</div>
+    <div class="msg" id="stateMsg"></div>
+    <label>この端末の名前</label>
+    <div class="row">
+      <input id="deviceName" placeholder="例：POCO F6 Pro">
+      <button id="saveDeviceNameBtn" style="flex:0 0 auto">保存</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="audioBtn">🔊 音を有効化</button>
+      <button id="testBtn" class="warn">テスト鳴動</button>
+      <button id="wakeBtn">画面ON維持：OFF</button>
+    </div>
+    <p class="sub" id="audioState">音はブラウザの決まりで、ボタンを押すまで鳴らせません。就寝前に必ず「音を有効化」を押してください。</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">アラーム</h2>
+    <div id="alarmList"><p class="sub">読み込み中…</p></div>
+    <hr style="border-color:var(--line)">
+    <label>時刻</label>
+    <input type="time" id="newTime" value="07:00">
+    <label>ラベル（任意）</label>
+    <input id="newLabel" placeholder="例：起床">
+    <label>繰り返し（選ばなければ一回のみ）</label>
+    <div class="daypick" id="newDays">
+      <label><input type="checkbox" value="1"><span>月</span></label>
+      <label><input type="checkbox" value="2"><span>火</span></label>
+      <label><input type="checkbox" value="3"><span>水</span></label>
+      <label><input type="checkbox" value="4"><span>木</span></label>
+      <label><input type="checkbox" value="5"><span>金</span></label>
+      <label><input type="checkbox" value="6"><span>土</span></label>
+      <label><input type="checkbox" value="0"><span>日</span></label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="addAlarmBtn">アラームを追加</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">接続中の端末</h2>
+    <div id="deviceList"><p class="sub">読み込み中…</p></div>
+  </div>
+
+  <div class="note">
+    <b>正直な制約</b><br>
+    Webアプリの仕様上、確実に鳴らせるのは<b>アプリを開いている間だけ</b>です。閉じている／スリープ中の端末ではOSに止められる場合があり、特にiPhoneはアプリを開いた状態が前提です。<br>
+    推奨：寝る前に全端末でこのアプリを開き、充電しながら「画面ON維持」をON、音量を上げておくこと。大事な朝は端末標準アラームの併用を推奨します。
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">設定</h2>
+    <p class="sub" id="accountLine"></p>
+    <div class="row">
+      <button id="reconfigBtn">Firebase設定を貼り直す</button>
+      <button id="logoutBtn">ログアウト</button>
+    </div>
+  </div>
+</section>
+
+<!-- 鳴動オーバーレイ -->
+<div id="ringOverlay">
+  <div class="test">テスト鳴動中</div>
+  <div class="rtime" id="ringTime">07:00</div>
+  <div class="rlabel" id="ringLabel">起床</div>
+  <button id="stopBtn" class="danger">止める</button>
+  <button id="snoozeBtn">スヌーズ（5分）</button>
+  <div class="sub" id="ringFrom"></div>
+</div>
+
+<div class="foot">同期アラーム（Firebase版）<br>アラームと状態はあなたのFirebaseプロジェクトに保存されます。</div>
+
+<script src="firebase-config.js"></script>
+<script type="module">
+const $ = (id)=>document.getElementById(id);
+const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys" };
+const DAYNAMES = ["日","月","火","水","木","金","土"];
+
+let fb = null;          // {app, auth, db, fns...}
+let user = null;
+let deviceId = localStorage.getItem(LS.devId);
+if(!deviceId){ deviceId = "dev-" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); localStorage.setItem(LS.devId, deviceId); }
+let deviceName = localStorage.getItem(LS.devName) || "";
+let alarms = [];        // {id,time,label,days,enabled}
+let state = null;       // state/current
+let devices = [];
+let offsetMs = 0;       // サーバー時刻 - 端末時刻
+let audioCtx = null, audioTimer = null, vibTimer = null;
+let ringing = false, ringKind = null; // 'alarm' | 'test'
+let wakeLock = null;
+let unsubs = [];
+
+const nowSrv = ()=> Date.now() + offsetMs;
+const pad = (n)=> String(n).padStart(2,"0");
+function fmtClock(ms){ const d=new Date(ms); return pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds()); }
+function fmtDate(ms){ const d=new Date(ms); return (d.getMonth()+1)+"月"+d.getDate()+"日（"+DAYNAMES[d.getDay()]+"）"; }
+
+/* ---------- 設定の読み込み ---------- */
+function parseConfig(text){
+  if(!text) return null;
+  const s = text.indexOf("{"), e = text.lastIndexOf("}");
+  if(s<0 || e<=s) return null;
+  const body = text.slice(s, e+1);
+  try{ return JSON.parse(body); }catch(_){}
+  try{ return (new Function("return ("+body+")"))(); }catch(_){}
+  return null;
+}
+function loadConfig(){
+  if(window.SYNC_ALARM_FIREBASE_CONFIG) return window.SYNC_ALARM_FIREBASE_CONFIG;
+  try{ return JSON.parse(localStorage.getItem(LS.cfg) || "null"); }catch(_){ return null; }
+}
+
+/* ---------- 画面切り替え ---------- */
+function show(view){
+  for(const v of ["setupView","authView","mainView"]) $(v).classList.toggle("hidden", v!==view);
+}
+
+/* ---------- Firebase 初期化 ---------- */
+async function initFirebase(cfg){
+  const base = "https://www.gstatic.com/firebasejs/10.12.5/";
+  const [appM, authM, fsM] = await Promise.all([
+    import(base+"firebase-app.js"), import(base+"firebase-auth.js"), import(base+"firebase-firestore.js")
+  ]);
+  const app = appM.initializeApp(cfg);
+  const auth = authM.getAuth(app);
+  const db = fsM.getFirestore(app);
+  return { app, auth, db, authM, fsM };
+}
+
+/* ---------- 音 ---------- */
+function ensureAudio(){
+  if(!audioCtx){ const AC = window.AudioContext || window.webkitAudioContext; if(AC) audioCtx = new AC(); }
+  if(audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  return !!audioCtx;
+}
+function beep(freq, dur, when){
+  if(!audioCtx) return;
+  const t = audioCtx.currentTime + when;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = "square"; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5, t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(t); o.stop(t+dur+0.05);
+}
+function startSound(){
+  if(!ensureAudio()) return;
+  stopSound();
+  const pattern = ()=>{ beep(880,0.16,0); beep(880,0.16,0.22); beep(1174,0.3,0.44); };
+  pattern();
+  audioTimer = setInterval(pattern, 1000);
+  if(navigator.vibrate){ const v=()=>navigator.vibrate([300,120,300,120,500]); v(); vibTimer = setInterval(v, 1600); }
+}
+function stopSound(){
+  if(audioTimer){ clearInterval(audioTimer); audioTimer=null; }
+  if(vibTimer){ clearInterval(vibTimer); vibTimer=null; }
+  if(navigator.vibrate) navigator.vibrate(0);
+}
+
+/* ---------- 鳴動 ---------- */
+function startRing(kind, label, timeText, fromText){
+  if(ringing) return;
+  ringing = true; ringKind = kind;
+  $("ringOverlay").classList.add("show");
+  $("ringOverlay").classList.toggle("test", kind==="test");
+  $("ringTime").textContent = timeText || fmtClock(nowSrv()).slice(0,5);
+  $("ringLabel").textContent = label || "";
+  $("ringFrom").textContent = fromText || "";
+  startSound();
+}
+function stopRingUI(){
+  ringing = false; ringKind = null;
+  $("ringOverlay").classList.remove("show");
+  stopSound();
+}
+
+/* ---------- Firestore 参照 ---------- */
+function refs(){
+  const { fsM, db } = fb; const uid = user.uid;
+  return {
+    alarmsCol: fsM.collection(db, "users", uid, "alarms"),
+    stateDoc: fsM.doc(db, "users", uid, "state", "current"),
+    devicesCol: fsM.collection(db, "users", uid, "devices"),
+    pingDoc: fsM.doc(db, "users", uid, "meta", "ping"),
+  };
+}
+
+/* ---------- 時刻補正 ---------- */
+async function calibrate(){
+  try{
+    const { fsM } = fb; const { pingDoc } = refs();
+    const t0 = Date.now();
+    await fsM.setDoc(pingDoc, { t: fsM.serverTimestamp() });
+    const snap = await fsM.getDoc(pingDoc);
+    const t1 = Date.now();
+    const sv = snap.data() && snap.data().t;
+    if(sv) offsetMs = sv.toMillis() - Math.round((t0+t1)/2);
+  }catch(_){ /* 補正できなくても端末時計で継続 */ }
+}
+
+/* ---------- 状態の書き込み ---------- */
+async function writeState(patch){
+  const { fsM } = fb; const { stateDoc } = refs();
+  await fsM.setDoc(stateDoc, { ...patch, updatedAt: fsM.serverTimestamp() }, { merge:true });
+}
+
+/* ---------- スケジューラ ---------- */
+function firedKeys(){ try{ return JSON.parse(localStorage.getItem(LS.fired)||"{}"); }catch(_){ return {}; } }
+function markFired(key){ const f=firedKeys(); f[key]=Date.now(); 
+  for(const k of Object.keys(f)) if(Date.now()-f[k] > 3*24*3600*1000) delete f[k];
+  localStorage.setItem(LS.fired, JSON.stringify(f)); }
+
+function nextFireOf(alarm, fromMs){
+  const [h,m] = alarm.time.split(":").map(Number);
+  const base = new Date(fromMs);
+  for(let add=0; add<8; add++){
+    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate()+add, h, m, 0, 0);
+    if(d.getTime() <= fromMs) continue;
+    if(alarm.days && alarm.days.length && !alarm.days.includes(d.getDay())) continue;
+    return d.getTime();
+  }
+  return null;
+}
+
+function schedulerTick(){
+  const now = nowSrv();
+  $("clock").textContent = fmtClock(now);
+  $("dateline").textContent = fmtDate(now);
+  // 次のアラーム表示
+  let next = null, nextAlarm = null;
+  for(const a of alarms){ if(!a.enabled) continue; const t = nextFireOf(a, now); if(t && (!next || t<next)){ next=t; nextAlarm=a; } }
+  if(state && state.snoozeUntil && state.snoozeUntil > now){ 
+    $("nextAlarm").textContent = "スヌーズ中… " + fmtClock(state.snoozeUntil).slice(0,5) + " に再び鳴ります";
+  } else if(next){
+    const diff = next - now;
+    const hh = Math.floor(diff/3600000), mm = Math.floor(diff%3600000/60000), ss = Math.floor(diff%60000/1000);
+    $("nextAlarm").textContent = "次のアラーム " + pad(new Date(next).getHours())+":"+pad(new Date(next).getMinutes()) +
+      "（あと " + (hh>0? hh+"時間":"") + mm + "分" + ss + "秒）" + (nextAlarm && nextAlarm.label ? "「"+nextAlarm.label+"」" : "");
+  } else $("nextAlarm").textContent = "次のアラームはありません";
+
+  // 発火判定（この端末が検知したら全体の状態も ringing にする）
+  for(const a of alarms){
+    if(!a.enabled) continue;
+    const [h,m] = a.time.split(":").map(Number);
+    const d = new Date(now);
+    if(d.getHours()===h && d.getMinutes()===m && d.getSeconds()<3){
+      if(a.days && a.days.length && !a.days.includes(d.getDay())) continue;
+      const key = a.id + "@" + d.getFullYear()+"-"+d.getMonth()+"-"+d.getDate()+" "+a.time;
+      if(!firedKeys()[key]){
+        markFired(key);
+        startRing("alarm", a.label, a.time, "");
+        writeState({ ringing:true, alarmId:a.id, label:a.label||"", timeText:a.time, startedBy:deviceName||"端末", snoozeUntil:null, test:null, startedAtMs: nowSrv() }).catch(()=>{});
+      }
+    }
+  }
+  // スヌーズ再鳴動
+  if(state && state.snoozeUntil && now >= state.snoozeUntil && !state.ringing){
+    writeState({ ringing:true, snoozeUntil:null, startedAtMs: nowSrv() }).catch(()=>{});
+    startRing("alarm", state.label||"", state.timeText||"", "スヌーズ明け");
+  }
+  // テスト鳴動の終了
+  if(state && state.test && state.test.until && now > state.test.until && ringKind==="test"){
+    stopRingUI();
+  }
+  // 鳴動の自動停止（10分）
+  if(state && state.ringing && state.startedAtMs && now - state.startedAtMs > 10*60*1000){
+    doStop(true).catch(()=>{});
+  }
+}
+
+/* ---------- 停止・スヌーズ ---------- */
+async function doStop(auto){
+  const wasAlarm = state && state.alarmId;
+  stopRingUI();
+  await writeState({ ringing:false, stoppedBy: auto? "（自動停止）" : (deviceName||"端末"), snoozeUntil:null, test:null });
+  // 一回のみアラームは止めた端末がOFFにする
+  if(wasAlarm){
+    const a = alarms.find(x=>x.id===wasAlarm);
+    if(a && (!a.days || !a.days.length)){
+      const { fsM, db } = fb;
+      await fsM.updateDoc(fsM.doc(db, "users", user.uid, "alarms", a.id), { enabled:false }).catch(()=>{});
+    }
+  }
+}
+async function doSnooze(){
+  stopRingUI();
+  await writeState({ ringing:false, snoozeUntil: nowSrv()+5*60*1000, snoozedBy: deviceName||"端末", test:null });
+}
+
+/* ---------- 起動 ---------- */
+async function boot(){
+  const cfg = loadConfig();
+  if(!cfg || !cfg.apiKey || !cfg.projectId){ show("setupView"); return; }
+  try{
+    fb = await initFirebase(cfg);
+  }catch(e){
+    show("setupView");
+    $("configError").textContent = "Firebaseの初期化に失敗しました。設定を確認してください：" + (e && e.message || e);
+    return;
+  }
+  const { authM } = fb;
+  try{ await authM.getRedirectResult(fb.auth); }catch(_){}
+  authM.onAuthStateChanged(fb.auth, async (u)=>{
+    user = u;
+    if(!u){ show("authView"); return; }
+    show("mainView");
+    $("accountLine").textContent = "ログイン中：" + (u.email || "");
+    $("deviceName").value = deviceName;
+    await onSignedIn();
+  });
+}
+
+async function onSignedIn(){
+  const { fsM } = fb; const r = refs();
+  await calibrate();
+  setInterval(calibrate, 10*60*1000);
+  // ハートビート
+  const beat = async ()=>{
+    try{ await fsM.setDoc(fsM.doc(fb.db, "users", user.uid, "devices", deviceId),
+      { name: deviceName || "（名前なし）", lastSeen: fsM.serverTimestamp() }, { merge:true }); }catch(_){}
+  };
+  beat(); setInterval(beat, 20000);
+  // 購読
+  for(const u of unsubs) u(); unsubs = [];
+  unsubs.push(fsM.onSnapshot(r.alarmsCol, (snap)=>{
+    alarms = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    alarms.sort((a,b)=> (a.time||"").localeCompare(b.time||""));
+    renderAlarms();
+  }));
+  unsubs.push(fsM.onSnapshot(r.stateDoc, (snap)=>{
+    const prev = state;
+    state = snap.exists()? snap.data() : null;
+    renderStateMsg(prev);
+    if(state && state.ringing){
+      if(!ringing) startRing("alarm", state.label||"", state.timeText||"", state.startedBy? state.startedBy+" が鳴らしました" : "");
+    } else if(state && state.test && state.test.until > nowSrv()){
+      if(!ringing) startRing("test", "テスト鳴動", fmtClock(nowSrv()).slice(0,5), state.test.by? state.test.by+" がテスト中" : "");
+    } else {
+      if(ringing) stopRingUI();
+    }
+  }));
+  unsubs.push(fsM.onSnapshot(r.devicesCol, (snap)=>{
+    devices = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    renderDevices();
+  }));
+  setInterval(schedulerTick, 250);
+  schedulerTick();
+}
+
+/* ---------- 描画 ---------- */
+function renderAlarms(){
+  const el = $("alarmList");
+  if(!alarms.length){ el.innerHTML = '<p class="sub">アラームはまだありません。下のフォームから追加してください。</p>'; return; }
+  el.innerHTML = "";
+  for(const a of alarms){
+    const row = document.createElement("div"); row.className = "alarm";
+    const daysText = (a.days && a.days.length)? a.days.slice().sort((x,y)=>x-y).map(d=>DAYNAMES[d]).join(" ") + " くり返し" : "一回のみ";
+    row.innerHTML = "";
+    const t = document.createElement("div"); t.className="time"; t.textContent = a.time;
+    const meta = document.createElement("div"); meta.className="meta";
+    const lab = document.createElement("div"); lab.className="label"; lab.textContent = a.label || "（ラベルなし）";
+    const dys = document.createElement("div"); dys.className="days"; dys.textContent = daysText;
+    meta.append(lab, dys);
+    const sw = document.createElement("label"); sw.className="switch";
+    const cb = document.createElement("input"); cb.type="checkbox"; cb.checked = !!a.enabled;
+    cb.addEventListener("change", async ()=>{ const { fsM, db } = fb;
+      await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",a.id), { enabled: cb.checked }); });
+    const sl = document.createElement("span"); sl.className="slider";
+    sw.append(cb, sl);
+    const del = document.createElement("button"); del.className="iconbtn"; del.textContent="削除";
+    del.addEventListener("click", async ()=>{ if(!confirm("このアラームを削除しますか？")) return;
+      const { fsM, db } = fb; await fsM.deleteDoc(fsM.doc(db,"users",user.uid,"alarms",a.id)); });
+    row.append(t, meta, sw, del);
+    el.appendChild(row);
+  }
+}
+function renderDevices(){
+  const el = $("deviceList");
+  const now = nowSrv();
+  if(!devices.length){ el.innerHTML = '<p class="sub">端末情報はまだありません。</p>'; return; }
+  el.innerHTML = "";
+  const sorted = devices.slice().sort((a,b)=> ((b.lastSeen&&b.lastSeen.toMillis())||0) - ((a.lastSeen&&a.lastSeen.toMillis())||0));
+  for(const d of sorted){
+    const ms = d.lastSeen && d.lastSeen.toMillis ? d.lastSeen.toMillis() : 0;
+    const online = ms && (now - ms < 75000);
+    const row = document.createElement("div"); row.className="dev";
+    const dot = document.createElement("span"); dot.className = "dot" + (online? " on":"");
+    const nm = document.createElement("span"); nm.textContent = (d.name || "（名前なし）") + (d.id===deviceId? "（この端末）":"");
+    const when = document.createElement("span"); when.className="when";
+    when.textContent = online? "接続中" : (ms? "最終確認 " + fmtClock(ms) : "");
+    row.append(dot, nm, when);
+    el.appendChild(row);
+  }
+}
+function renderStateMsg(prev){
+  const el = $("stateMsg");
+  if(!state){ el.className="msg"; return; }
+  let text = "";
+  if(state.ringing) text = "🔔 鳴動中です" + (state.startedBy? "（"+state.startedBy+"）":"");
+  else if(state.snoozeUntil && state.snoozeUntil > nowSrv()) text = "💤 スヌーズ中（"+(state.snoozedBy||"")+"）… " + fmtClock(state.snoozeUntil).slice(0,5) + " に再び鳴ります";
+  else if(state.stoppedBy) text = "✅ 前回のアラームは " + state.stoppedBy + " が止めました";
+  el.textContent = text;
+  el.className = "msg" + (text? " show":"");
+}
+
+/* ---------- イベント ---------- */
+$("saveConfigBtn").addEventListener("click", ()=>{
+  const cfg = parseConfig($("configInput").value);
+  if(!cfg || !cfg.apiKey || !cfg.projectId){ $("configError").textContent = "firebaseConfigを読み取れませんでした。コピーした全文を貼ってください。"; return; }
+  localStorage.setItem(LS.cfg, JSON.stringify(cfg));
+  location.reload();
+});
+$("reconfigBtn").addEventListener("click", ()=>{ show("setupView"); });
+$("loginPopupBtn").addEventListener("click", async ()=>{
+  try{ const p = new fb.authM.GoogleAuthProvider(); await fb.authM.signInWithPopup(fb.auth, p); }
+  catch(e){ $("authError").textContent = "ログインに失敗しました：" + (e && e.message || e) + "（「うまくいかない場合はこちら」も試してください）"; }
+});
+$("loginRedirectBtn").addEventListener("click", async ()=>{
+  try{ const p = new fb.authM.GoogleAuthProvider(); await fb.authM.signInWithRedirect(fb.auth, p); }
+  catch(e){ $("authError").textContent = "ログインに失敗しました：" + (e && e.message || e); }
+});
+$("logoutBtn").addEventListener("click", async ()=>{ await fb.authM.signOut(fb.auth); location.reload(); });
+$("saveDeviceNameBtn").addEventListener("click", async ()=>{
+  deviceName = $("deviceName").value.trim();
+  localStorage.setItem(LS.devName, deviceName);
+  const { fsM, db } = fb;
+  await fsM.setDoc(fsM.doc(db,"users",user.uid,"devices",deviceId), { name: deviceName||"（名前なし）", lastSeen: fsM.serverTimestamp() }, { merge:true });
+});
+$("audioBtn").addEventListener("click", ()=>{
+  if(ensureAudio()){ beep(880,0.12,0); beep(1174,0.18,0.16);
+    $("audioState").textContent = "音は有効です。このままにしておいてください。";
+    $("audioBtn").textContent = "🔊 音は有効です"; }
+});
+$("testBtn").addEventListener("click", async ()=>{
+  ensureAudio();
+  await writeState({ test:{ until: nowSrv()+15000, by: deviceName||"端末" } });
+});
+$("wakeBtn").addEventListener("click", async ()=>{
+  try{
+    if(wakeLock){ await wakeLock.release(); wakeLock = null; $("wakeBtn").textContent = "画面ON維持：OFF"; return; }
+    if(!("wakeLock" in navigator)) { alert("この端末/ブラウザは画面ON維持（Wake Lock）に対応していません。端末設定で画面消灯を長めにしてください。"); return; }
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", ()=>{ wakeLock=null; $("wakeBtn").textContent="画面ON維持：OFF"; });
+    $("wakeBtn").textContent = "画面ON維持：ON";
+  }catch(e){ alert("画面ON維持を設定できませんでした：" + (e && e.message || e)); }
+});
+document.addEventListener("visibilitychange", async ()=>{
+  if(document.visibilityState==="visible" && wakeLock===null && $("wakeBtn").textContent.includes("ON")){
+    try{ wakeLock = await navigator.wakeLock.request("screen"); }catch(_){}
+  }
+});
+$("addAlarmBtn").addEventListener("click", async ()=>{
+  const time = $("newTime").value;
+  if(!time){ alert("時刻を入れてください"); return; }
+  const label = $("newLabel").value.trim();
+  const days = [...document.querySelectorAll("#newDays input:checked")].map(x=>Number(x.value));
+  const { fsM } = fb; const r = refs();
+  await fsM.addDoc(r.alarmsCol, { time, label, days, enabled:true, createdAt: fsM.serverTimestamp() });
+  $("newLabel").value = "";
+  document.querySelectorAll("#newDays input:checked").forEach(x=>x.checked=false);
+});
+$("stopBtn").addEventListener("click", ()=>{ doStop(false).catch(()=>{}); });
+$("snoozeBtn").addEventListener("click", ()=>{ doSnooze().catch(()=>{}); });
+
+if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+boot();
+</script>
+</body>
+</html>
