@@ -125,11 +125,11 @@
       <button id="saveDeviceNameBtn" style="flex:0 0 auto">保存</button>
     </div>
     <div class="row" style="margin-top:12px">
-      <button id="audioBtn">🔊 音を有効化</button>
+      <button id="audioBtn">🔊 音：ON</button>
       <button id="testBtn" class="warn">テスト鳴動</button>
-      <button id="wakeBtn">画面ON維持：OFF</button>
+      <button id="wakeBtn">画面ON維持：ON</button>
     </div>
-    <p class="sub" id="audioState">音はブラウザの決まりで、ボタンを押すまで鳴らせません。就寝前に必ず「音を有効化」を押してください。</p>
+    <p class="sub" id="audioState">音と画面ON維持はデフォルトONです。音はブラウザの決まりで、画面を一度タップするまでは出ません（ログインなどのタップで自動的に有効になります）。バイブレーションは音の設定に関わらず鳴動時に作動します（iPhoneはバイブレーション非対応です）。</p>
   </div>
 
   <div class="card">
@@ -152,6 +152,28 @@
     </div>
     <div class="row" style="margin-top:12px">
       <button class="primary" id="addAlarmBtn">アラームを追加</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="editCard">
+    <h2 style="margin-top:0">アラームを編集</h2>
+    <label>時刻</label>
+    <input type="time" id="editTime">
+    <label>ラベル（任意）</label>
+    <input id="editLabel" placeholder="例：起床">
+    <label>繰り返し（選ばなければ一回のみ）</label>
+    <div class="daypick" id="editDays">
+      <label><input type="checkbox" value="1"><span>月</span></label>
+      <label><input type="checkbox" value="2"><span>火</span></label>
+      <label><input type="checkbox" value="3"><span>水</span></label>
+      <label><input type="checkbox" value="4"><span>木</span></label>
+      <label><input type="checkbox" value="5"><span>金</span></label>
+      <label><input type="checkbox" value="6"><span>土</span></label>
+      <label><input type="checkbox" value="0"><span>日</span></label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="saveEditBtn">保存する</button>
+      <button id="cancelEditBtn">キャンセル</button>
     </div>
   </div>
 
@@ -191,7 +213,7 @@
 <script src="firebase-config.js"></script>
 <script type="module">
 const $ = (id)=>document.getElementById(id);
-const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys" };
+const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled" };
 const DAYNAMES = ["日","月","火","水","木","金","土"];
 
 let fb = null;          // {app, auth, db, fns...}
@@ -206,6 +228,9 @@ let offsetMs = 0;       // サーバー時刻 - 端末時刻
 let audioCtx = null, audioTimer = null, vibTimer = null;
 let ringing = false, ringKind = null; // 'alarm' | 'test'
 let wakeLock = null;
+let audioEnabled = localStorage.getItem(LS.audio) !== "0"; // デフォルトON
+let wakeEnabled = localStorage.getItem(LS.wake) !== "0";   // デフォルトON
+let editingId = null;
 let unsubs = [];
 
 const nowSrv = ()=> Date.now() + offsetMs;
@@ -263,18 +288,25 @@ function beep(freq, dur, when){
   o.start(t); o.stop(t+dur+0.05);
 }
 function startSound(){
+  if(!audioEnabled) return;
   if(!ensureAudio()) return;
-  stopSound();
+  stopSoundOnly();
   const pattern = ()=>{ beep(880,0.16,0); beep(880,0.16,0.22); beep(1174,0.3,0.44); };
   pattern();
   audioTimer = setInterval(pattern, 1000);
-  if(navigator.vibrate){ const v=()=>navigator.vibrate([300,120,300,120,500]); v(); vibTimer = setInterval(v, 1600); }
 }
-function stopSound(){
-  if(audioTimer){ clearInterval(audioTimer); audioTimer=null; }
+function stopSoundOnly(){ if(audioTimer){ clearInterval(audioTimer); audioTimer=null; } }
+function startVibration(){
+  if(!navigator.vibrate) return;
+  stopVibration();
+  const v = ()=>navigator.vibrate([300,120,300,120,500]);
+  v(); vibTimer = setInterval(v, 1600);
+}
+function stopVibration(){
   if(vibTimer){ clearInterval(vibTimer); vibTimer=null; }
   if(navigator.vibrate) navigator.vibrate(0);
 }
+function stopSound(){ stopSoundOnly(); stopVibration(); }
 
 /* ---------- 鳴動 ---------- */
 function startRing(kind, label, timeText, fromText){
@@ -286,6 +318,7 @@ function startRing(kind, label, timeText, fromText){
   $("ringLabel").textContent = label || "";
   $("ringFrom").textContent = fromText || "";
   startSound();
+  startVibration();
 }
 function stopRingUI(){
   ringing = false; ringKind = null;
@@ -429,8 +462,20 @@ async function boot(){
   });
 }
 
+function openEdit(a){
+  editingId = a.id;
+  $("editTime").value = a.time || "07:00";
+  $("editLabel").value = a.label || "";
+  document.querySelectorAll("#editDays input").forEach(x=>{ x.checked = (a.days||[]).includes(Number(x.value)); });
+  $("editCard").classList.remove("hidden");
+  $("editCard").scrollIntoView({ behavior:"smooth", block:"center" });
+}
+function closeEdit(){ editingId = null; $("editCard").classList.add("hidden"); }
+
 async function onSignedIn(){
   const { fsM } = fb; const r = refs();
+  renderToggles();
+  acquireWakeLock();
   await calibrate();
   setInterval(calibrate, 10*60*1000);
   // ハートビート
@@ -486,10 +531,12 @@ function renderAlarms(){
       await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",a.id), { enabled: cb.checked }); });
     const sl = document.createElement("span"); sl.className="slider";
     sw.append(cb, sl);
+    const edit = document.createElement("button"); edit.className="iconbtn"; edit.textContent="編集";
+    edit.addEventListener("click", ()=> openEdit(a));
     const del = document.createElement("button"); del.className="iconbtn"; del.textContent="削除";
     del.addEventListener("click", async ()=>{ if(!confirm("このアラームを削除しますか？")) return;
       const { fsM, db } = fb; await fsM.deleteDoc(fsM.doc(db,"users",user.uid,"alarms",a.id)); });
-    row.append(t, meta, sw, del);
+    row.append(t, meta, sw, edit, del);
     el.appendChild(row);
   }
 }
@@ -545,29 +592,59 @@ $("saveDeviceNameBtn").addEventListener("click", async ()=>{
   const { fsM, db } = fb;
   await fsM.setDoc(fsM.doc(db,"users",user.uid,"devices",deviceId), { name: deviceName||"（名前なし）", lastSeen: fsM.serverTimestamp() }, { merge:true });
 });
+function renderToggles(){
+  $("audioBtn").textContent = audioEnabled? "🔊 音：ON" : "🔇 音：OFF";
+  $("wakeBtn").textContent = wakeEnabled? "画面ON維持：ON" : "画面ON維持：OFF";
+}
+async function acquireWakeLock(){
+  if(!wakeEnabled || wakeLock) return;
+  if(!("wakeLock" in navigator)) return;
+  try{
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", ()=>{ wakeLock = null; });
+  }catch(_){ /* 画面が前面でない等。次のタップ/復帰時に再試行 */ }
+}
 $("audioBtn").addEventListener("click", ()=>{
-  if(ensureAudio()){ beep(880,0.12,0); beep(1174,0.18,0.16);
-    $("audioState").textContent = "音は有効です。このままにしておいてください。";
-    $("audioBtn").textContent = "🔊 音は有効です"; }
+  audioEnabled = !audioEnabled;
+  localStorage.setItem(LS.audio, audioEnabled? "1":"0");
+  if(audioEnabled && ensureAudio()){ beep(880,0.12,0); beep(1174,0.18,0.16); }
+  renderToggles();
 });
+// 画面のどこかをタップしたら、音（デフォルトON）の準備と画面ON維持を自動で有効化する
+document.addEventListener("pointerdown", ()=>{
+  if(audioEnabled) ensureAudio();
+  if(wakeEnabled) acquireWakeLock();
+}, { passive:true });
 $("testBtn").addEventListener("click", async ()=>{
-  ensureAudio();
+  if(audioEnabled) ensureAudio();
   await writeState({ test:{ until: nowSrv()+15000, by: deviceName||"端末" } });
 });
 $("wakeBtn").addEventListener("click", async ()=>{
-  try{
-    if(wakeLock){ await wakeLock.release(); wakeLock = null; $("wakeBtn").textContent = "画面ON維持：OFF"; return; }
-    if(!("wakeLock" in navigator)) { alert("この端末/ブラウザは画面ON維持（Wake Lock）に対応していません。端末設定で画面消灯を長めにしてください。"); return; }
-    wakeLock = await navigator.wakeLock.request("screen");
-    wakeLock.addEventListener("release", ()=>{ wakeLock=null; $("wakeBtn").textContent="画面ON維持：OFF"; });
-    $("wakeBtn").textContent = "画面ON維持：ON";
-  }catch(e){ alert("画面ON維持を設定できませんでした：" + (e && e.message || e)); }
-});
-document.addEventListener("visibilitychange", async ()=>{
-  if(document.visibilityState==="visible" && wakeLock===null && $("wakeBtn").textContent.includes("ON")){
-    try{ wakeLock = await navigator.wakeLock.request("screen"); }catch(_){}
+  wakeEnabled = !wakeEnabled;
+  localStorage.setItem(LS.wake, wakeEnabled? "1":"0");
+  if(wakeEnabled){
+    if(!("wakeLock" in navigator)) alert("この端末/ブラウザは画面ON維持（Wake Lock）に対応していません。端末設定で画面消灯を長めにしてください。");
+    await acquireWakeLock();
+  } else if(wakeLock){
+    try{ await wakeLock.release(); }catch(_){}
+    wakeLock = null;
   }
+  renderToggles();
 });
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState==="visible") acquireWakeLock();
+});
+$("saveEditBtn").addEventListener("click", async ()=>{
+  if(!editingId) return;
+  const time = $("editTime").value;
+  if(!time){ alert("時刻を入れてください"); return; }
+  const label = $("editLabel").value.trim();
+  const days = [...document.querySelectorAll("#editDays input:checked")].map(x=>Number(x.value));
+  const { fsM, db } = fb;
+  await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",editingId), { time, label, days });
+  closeEdit();
+});
+$("cancelEditBtn").addEventListener("click", closeEdit);
 $("addAlarmBtn").addEventListener("click", async ()=>{
   const time = $("newTime").value;
   if(!time){ alert("時刻を入れてください"); return; }
