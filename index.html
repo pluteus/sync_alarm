@@ -128,7 +128,9 @@
       <button id="audioBtn">🔊 音：ON</button>
       <button id="testBtn" class="warn">テスト鳴動</button>
       <button id="wakeBtn">画面ON維持：ON</button>
+      <button id="vibBtn">📳 バイブのテスト</button>
     </div>
+    <p class="sub" id="vibState"></p>
     <p class="sub" id="audioState">音と画面ON維持はデフォルトONです。音はブラウザの決まりで、画面を一度タップするまでは出ません（ログインなどのタップで自動的に有効になります）。バイブレーションは音の設定に関わらず鳴動時に作動します（iPhoneはバイブレーション非対応です）。</p>
   </div>
 
@@ -618,6 +620,17 @@ document.addEventListener("pointerdown", ()=>{
 $("testBtn").addEventListener("click", async ()=>{
   if(audioEnabled) ensureAudio();
   await writeState({ test:{ until: nowSrv()+15000, by: deviceName||"端末" } });
+});
+$("vibBtn").addEventListener("click", ()=>{
+  const el = $("vibState");
+  if(!("vibrate" in navigator)){ el.textContent = "診断：このブラウザはバイブレーションAPIに未対応です。"; return; }
+  const ok = navigator.vibrate([200,80,200,80,400]);
+  if(ok){
+    el.textContent = "診断：バイブレーションを呼び出しました。今ブルッと来ていれば正常です。来ていない場合は、端末のマナーモード／おやすみモード、または本体のバイブレーション設定で抑えられています。";
+  } else {
+    const act = (navigator.userActivation)? navigator.userActivation.hasBeenActive : "不明";
+    el.textContent = "診断：呼び出しがブロックされました（タップ済みフラグ：" + act + "）。画面を一度タップしてから押し直してください。それでもダメなら端末のマナーモード／おやすみモードを確認してください。";
+  }
 });
 $("wakeBtn").addEventListener("click", async ()=>{
   wakeEnabled = !wakeEnabled;
