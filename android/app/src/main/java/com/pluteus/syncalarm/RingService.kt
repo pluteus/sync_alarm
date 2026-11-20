@@ -8,8 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.media.RingtoneManager
+import android.media.AudioFocusRequest
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -23,12 +25,18 @@ import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.sin
 
 /**
  * 鳴動中のフォアグラウンドサービス。
- * - 端末のアラーム音量ストリームでループ再生＋バイブレーション（音OFFでもバイブは作動）
- * - Firestore の state/current を監視し、どの端末で止めても（PWA含む）即座に止まる
- * - 10分で自動停止（PWA版と同じ）
+ * - 音：端末のアラーム音URIに頼らず、PWA版と同じビープパターンを AudioTrack で生成してループ再生
+ *   （アラーム音量ストリーム USAGE_ALARM を使用）
+ * - バイブ：波形の自動リピートに頼らず、Handler で 1.6 秒ごとに打ち直して止めるまで継続
+ * - Firestore の state/current を監視し、どの端末で止めても（PWA含む）即座に止まる。
+ *   ただし監視の初期スナップショット（前回の ringing=false）を拾って即停止しないよう、
+ *   自分の鳴動が state に反映された（ringing=true を観測した）あとでのみ停止に反応する。
+ * - 10分で自動停止（PWA版と同じ）。テスト鳴動は15秒で自動停止。
  */
 class RingService : Service() {
     companion object {
@@ -42,7 +50,8 @@ class RingService : Service() {
         @Volatile var isRinging: Boolean = false
     }
 
-    private var player: MediaPlayer? = null
+    private var audioTrack: AudioTrack? = null
+    private var focusRequest: AudioFocusRequest? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var stateReg: ListenerRegistration? = null
     private var vibrator: Vibrator? = null
@@ -53,6 +62,14 @@ class RingService : Service() {
     private var timeText: String = ""
     private var kind: String = "alarm"
     private var startedAtMs: Long = 0
+    private var confirmedRinging = false
+
+    private val vibLoop = object : Runnable {
+        override fun run() {
+            pulseVibration()
+            handler.postDelayed(this, 1600)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -67,25 +84,33 @@ class RingService : Service() {
         kind = intent?.getStringExtra(EXTRA_KIND) ?: "alarm"
         startedAtMs = System.currentTimeMillis()
         isRinging = true
+        confirmedRinging = false
 
         startForeground(NOTIF_ID, buildNotification())
         acquireWakeLock()
         if (Prefs.soundEnabled(this)) startSound()
-        startVibration()
+        startVibrationLoop()
         openRingActivity()
-        watchState()
         // 次回分の再スケジュール（繰り返しアラームの翌回・同期取り直し）
         SyncWorker.enqueueOneTime(this)
-        // 10分自動停止
-        handler.postDelayed({
-            val uid = Repo.uid()
-            if (uid != null) scope.launch { Repo.writeStop(uid, "（自動停止）", alarmId) }
-            stopRinging()
-        }, 10 * 60 * 1000L)
-        // 鳴動開始を全体へ通知（テスト鳴動は PWA 側で既に書かれているので上書きしない）
+
         val uid = Repo.uid()
-        if (uid != null && kind != "test") {
-            Repo.writeRinging(uid, alarmId, label, timeText, Prefs.deviceName(this))
+        if (kind == "test") {
+            // テスト鳴動は15秒で自動停止（state の test は書いた側が管理する）
+            handler.postDelayed({ stopRinging() }, 16000)
+            watchState()
+        } else {
+            // 鳴動開始を全体へ通知してから監視を始める（初期スナップショットの競合回避）
+            if (uid != null) {
+                Repo.writeRinging(uid, alarmId, label, timeText, Prefs.deviceName(this))
+            }
+            watchState()
+            // 10分自動停止
+            handler.postDelayed({
+                val u = Repo.uid()
+                if (u != null) scope.launch { Repo.writeStop(u, "（自動停止）", alarmId) }
+                stopRinging()
+            }, 10 * 60 * 1000L)
         }
         return START_STICKY
     }
@@ -144,75 +169,162 @@ class RingService : Service() {
         } catch (e: Exception) { }
     }
 
+    /* ---------- 音（生成トーンを AudioTrack でループ） ---------- */
+
+    /** PWA版と同じパターン（880Hz×2 + 1174Hz、1秒ループ）の PCM を生成する。 */
+    private fun buildToneBuffer(): ShortArray {
+        val sr = 44100
+        val buf = ShortArray(sr) // 1秒
+        fun tone(freq: Double, fromSec: Double, toSec: Double) {
+            val from = (fromSec * sr).toInt()
+            val to = (toSec * sr).toInt()
+            for (i in from until to) {
+                if (i >= buf.size) break
+                val t = (i - from).toDouble() / sr
+                // 立ち上がり/減衰を少し付けてクリックノイズを抑える
+                val env = minOf(1.0, t / 0.01, (toSec - fromSec - t) / 0.02 + 0.2).coerceIn(0.0, 1.0)
+                buf[i] = (sin(2 * PI * freq * i / sr) * 0.85 * env * Short.MAX_VALUE).toInt().toShort()
+            }
+        }
+        tone(880.0, 0.00, 0.16)
+        tone(880.0, 0.22, 0.38)
+        tone(1174.0, 0.44, 0.74)
+        return buf
+    }
+
     private fun startSound() {
         try {
-            var uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            player = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+            // オーディオフォーカス（アラーム用途）
+            try {
+                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                        .setAudioAttributes(attrs)
+                        .setOnAudioFocusChangeListener { }
+                        .build()
+                    am.requestAudioFocus(focusRequest!!)
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                }
+            } catch (e: Exception) { }
+
+            val buf = buildToneBuffer()
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(attrs)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(44100)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .build()
                 )
-                setDataSource(this@RingService, uri)
-                isLooping = true
-                prepare()
-                start()
-            }
+                .setBufferSizeInBytes(buf.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            track.write(buf, 0, buf.size)
+            track.setLoopPoints(0, buf.size, -1)
+            track.setVolume(1.0f)
+            track.play()
+            audioTrack = track
         } catch (e: Exception) { /* 音が出なくてもバイブと画面で知らせる */ }
     }
 
-    private fun startVibration() {
+    private fun stopSound() {
+        try { audioTrack?.stop() } catch (e: Exception) { }
+        try { audioTrack?.release() } catch (e: Exception) { }
+        audioTrack = null
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && focusRequest != null) {
+                am.abandonAudioFocusRequest(focusRequest!!)
+            }
+        } catch (e: Exception) { }
+        focusRequest = null
+    }
+
+    /* ---------- バイブ（1.6秒ごとに打ち直すループ） ---------- */
+
+    private fun startVibrationLoop() {
         try {
             vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
             } else {
                 @Suppress("DEPRECATION") getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
             }
-            val pattern = longArrayOf(0, 300, 120, 300, 120, 500, 400)
+        } catch (e: Exception) { vibrator = null }
+        handler.removeCallbacks(vibLoop)
+        handler.post(vibLoop)
+    }
+
+    private fun pulseVibration() {
+        try {
+            val v = vibrator ?: return
+            val pattern = longArrayOf(0, 300, 120, 300, 120, 500)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
+                v.vibrate(VibrationEffect.createWaveform(pattern, -1))
             } else {
-                @Suppress("DEPRECATION") vibrator?.vibrate(pattern, 0)
+                @Suppress("DEPRECATION") v.vibrate(pattern, -1)
             }
         } catch (e: Exception) { }
     }
 
-    /** Firestore の state を監視：ringing=false になったら（誰が止めても）止まる。 */
+    private fun stopVibration() {
+        handler.removeCallbacks(vibLoop)
+        try { vibrator?.cancel() } catch (e: Exception) { }
+    }
+
+    /* ---------- 状態監視 ---------- */
+
+    /**
+     * Firestore の state を監視する。
+     * - 通常鳴動：自分の ringing=true が反映されたのを確認してから、ringing=false で停止する
+     *   （開始直後に前回の false を拾って即停止する競合の回避）
+     * - テスト鳴動：test が消えた／期限切れになったら停止する
+     */
     private fun watchState() {
         val uid = Repo.uid() ?: return
         val doc = Repo.stateDoc(uid) ?: return
         stateReg?.remove()
         stateReg = doc.addSnapshotListener { snap, _ ->
             if (snap == null || !snap.exists()) return@addSnapshotListener
+            if (kind == "test") {
+                val test = snap.get("test") as? Map<*, *>
+                val until = (test?.get("until") as? Number)?.toLong() ?: 0L
+                if (test == null || until <= System.currentTimeMillis()) stopRinging()
+                return@addSnapshotListener
+            }
             val ringing = snap.getBoolean("ringing") ?: false
-            if (!ringing) stopRinging()
+            if (ringing) {
+                confirmedRinging = true
+            } else if (confirmedRinging) {
+                stopRinging()
+            }
         }
     }
 
     private fun stopRinging() {
-        if (!isRinging && player == null) {
-            stopSelf()
-            return
-        }
+        val wasRinging = isRinging
         isRinging = false
-        try { player?.stop() } catch (e: Exception) { }
-        try { player?.release() } catch (e: Exception) { }
-        player = null
-        try { vibrator?.cancel() } catch (e: Exception) { }
+        stopSound()
+        stopVibration()
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (e: Exception) { }
         handler.removeCallbacksAndMessages(null)
-        sendBroadcast(Intent(FINISH_ACTION).setPackage(packageName))
+        if (wasRinging) {
+            sendBroadcast(Intent(FINISH_ACTION).setPackage(packageName))
+        }
         stopSelf()
     }
 
     override fun onDestroy() {
         isRinging = false
         stateReg?.remove()
-        try { player?.release() } catch (e: Exception) { }
-        try { vibrator?.cancel() } catch (e: Exception) { }
+        stopSound()
+        stopVibration()
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (e: Exception) { }
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
