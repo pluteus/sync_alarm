@@ -27,6 +27,26 @@ object Repo {
     fun devicesCol(uid: String): CollectionReference? =
         db()?.collection("users")?.document(uid)?.collection("devices")
 
+    /** 全端末で同期する設定（users/{uid}/settings/app）。PWA版と共通。 */
+    fun settingsDoc(uid: String): DocumentReference? =
+        db()?.collection("users")?.document(uid)?.collection("settings")?.document("app")
+
+    suspend fun writeSoundEnabled(uid: String, on: Boolean, by: String) {
+        settingsDoc(uid)?.set(
+            mapOf(
+                "soundEnabled" to on,
+                "soundUpdatedBy" to by,
+                "soundUpdatedAt" to FieldValue.serverTimestamp()
+            ),
+            com.google.firebase.firestore.SetOptions.merge()
+        )?.await()
+    }
+
+    suspend fun fetchSoundEnabled(uid: String): Boolean? {
+        val d = settingsDoc(uid)?.get()?.await() ?: return null
+        return if (d.exists() && d.contains("soundEnabled")) d.getBoolean("soundEnabled") else null
+    }
+
     suspend fun fetchAlarms(uid: String): List<AlarmItem> {
         val col = alarmsCol(uid) ?: return emptyList()
         val snap = col.get().await()

@@ -47,6 +47,8 @@ class MainActivity : AppCompatActivity() {
     private var alarms: List<AlarmItem> = emptyList()
     private var alarmsReg: ListenerRegistration? = null
     private var stateReg: ListenerRegistration? = null
+    private var settingsReg: ListenerRegistration? = null
+    private var settingsSoundRefresh: (() -> Unit)? = null
     private var stateMap: Map<String, Any?>? = null
     private val handler = Handler(Looper.getMainLooper())
     private var testRingActive = false
@@ -183,6 +185,17 @@ class MainActivity : AppCompatActivity() {
             renderStateMsg()
             handleTestState()
         }
+        // 同期設定（音ON/OFF）：他端末で切り替えたらこの端末にも反映する
+        val sDoc = Repo.settingsDoc(uid)
+        settingsReg?.remove()
+        settingsReg = sDoc?.addSnapshotListener { snap, _ ->
+            if (snap == null || !snap.exists()) return@addSnapshotListener
+            val v = snap.getBoolean("soundEnabled") ?: return@addSnapshotListener
+            if (v != Prefs.soundEnabled(this)) {
+                Prefs.setSoundEnabled(this, v)
+                settingsSoundRefresh?.invoke()
+            }
+        }
         handler.removeCallbacks(heartbeat)
         handler.post(heartbeat)
         SyncWorker.enqueueOneTime(this)
@@ -191,6 +204,7 @@ class MainActivity : AppCompatActivity() {
     private fun stopMainListeners() {
         alarmsReg?.remove(); alarmsReg = null
         stateReg?.remove(); stateReg = null
+        settingsReg?.remove(); settingsReg = null
         handler.removeCallbacks(heartbeat)
     }
 
@@ -344,12 +358,19 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "端末名を保存しました", Toast.LENGTH_SHORT).show()
         }
         fun refreshSound() {
-            dlg.soundBtn.text = if (Prefs.soundEnabled(this)) "🔊 音：ON" else "🔇 音：OFF"
+            dlg.soundBtn.text = if (Prefs.soundEnabled(this)) "🔊 音：ON（同期）" else "🔇 音：OFF（同期）"
         }
         refreshSound()
+        settingsSoundRefresh = { refreshSound() }
         dlg.soundBtn.setOnClickListener {
-            Prefs.setSoundEnabled(this, !Prefs.soundEnabled(this))
+            val next = !Prefs.soundEnabled(this)
+            Prefs.setSoundEnabled(this, next)
             refreshSound()
+            // 全端末へ同期する
+            val u = Repo.uid()
+            if (u != null) {
+                lifecycleScope.launch { Repo.writeSoundEnabled(u, next, Prefs.deviceName(this@MainActivity)) }
+            }
         }
         dlg.batteryBtn.setOnClickListener {
             try {
@@ -398,6 +419,7 @@ class MainActivity : AppCompatActivity() {
             .setView(dlg.root)
             .setNegativeButton("閉じる", null)
             .create()
+        dialog.setOnDismissListener { settingsSoundRefresh = null }
         dlg.logoutBtn.setOnClickListener {
             Repo.auth()?.signOut()
             try { signInClient?.signOut() } catch (e: Exception) { }
