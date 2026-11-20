@@ -182,6 +182,9 @@
       <button id="audioBtn">🔊 音：ON</button>
       <button id="wakeBtn">画面ON維持：ON</button>
     </div>
+    <label>🎵 鳴動曲（全端末で同期）</label>
+    <select id="trackSel"><option value="">なし（ビープ音）</option></select>
+    <p class="sub" id="trackHint"></p>
     <div class="row" style="margin-top:8px">
       <button id="vibBtn">📳 バイブのテスト</button>
     </div>
@@ -243,7 +246,7 @@
 <script src="firebase-config.js"></script>
 <script type="module">
 const $ = (id)=>document.getElementById(id);
-const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled" };
+const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName" };
 const DAYNAMES = ["日","月","火","水","木","金","土"];
 
 let fb = null;          // {app, auth, db, fns...}
@@ -262,6 +265,14 @@ let audioEnabled = localStorage.getItem(LS.audio) !== "0"; // デフォルトON
 let wakeEnabled = localStorage.getItem(LS.wake) !== "0";   // デフォルトON
 let editingId = null;
 let unsubs = [];
+// 鳴動曲（man_in_the_mirror の BGM リストから選択し、全端末で同期する）
+const BGM_LIST_URL = "https://pluteus.github.io/man_in_the_mirror/bgm.txt";
+const BGM_BASE = "https://pluteus.github.io/man_in_the_mirror/bgm/";
+const BGM_CACHE = "sync-alarm-bgm-v1";
+let trackName = localStorage.getItem(LS.track) || "";
+let bgmEntries = [];
+let musicAudio = null, musicUrl = null;
+function trackUrl(name){ return BGM_BASE + encodeURIComponent(name.normalize("NFC")); }
 
 const nowSrv = ()=> Date.now() + offsetMs;
 const pad = (n)=> String(n).padStart(2,"0");
@@ -342,13 +353,96 @@ function beep(freq, dur, when){
 }
 function startSound(){
   if(!audioEnabled) return;
-  if(!ensureAudio()) return;
   stopSoundOnly();
+  // 曲が指定されていて再生できれば曲、ダメならデフォルトのビープ音
+  if(trackName){ playTrack().then(ok=>{ if(!ok && ringing) startBeepLoop(); }); return; }
+  startBeepLoop();
+}
+function startBeepLoop(){
+  if(!ensureAudio()) return;
   const pattern = ()=>{ beep(880,0.16,0); beep(880,0.16,0.22); beep(1174,0.3,0.44); };
   pattern();
   audioTimer = setInterval(pattern, 1000);
 }
-function stopSoundOnly(){ if(audioTimer){ clearInterval(audioTimer); audioTimer=null; } }
+async function playTrack(){
+  try{
+    let res = null;
+    try{ const c = await caches.open(BGM_CACHE); res = await c.match(trackUrl(trackName)); }catch(_){}
+    if(!res && await downloadTrack(trackName)){
+      const c = await caches.open(BGM_CACHE);
+      res = await c.match(trackUrl(trackName));
+    }
+    if(!res) return false;
+    const blob = await res.blob();
+    stopTrack();
+    musicUrl = URL.createObjectURL(blob);
+    musicAudio = new Audio(musicUrl);
+    musicAudio.loop = true;
+    await musicAudio.play();
+    return true;
+  }catch(_){ stopTrack(); return false; }
+}
+function stopTrack(){
+  if(musicAudio){ try{ musicAudio.pause(); }catch(_){} musicAudio = null; }
+  if(musicUrl){ URL.revokeObjectURL(musicUrl); musicUrl = null; }
+}
+async function trackCached(name){
+  try{ const c = await caches.open(BGM_CACHE); return !!(await c.match(trackUrl(name))); }catch(_){ return false; }
+}
+async function downloadTrack(name){
+  try{
+    const url = trackUrl(name);
+    const c = await caches.open(BGM_CACHE);
+    if(await c.match(url)) return true;
+    const res = await fetch(url);
+    if(!res.ok) return false;
+    await c.put(url, res);
+    return true;
+  }catch(_){ return false; }
+}
+async function loadBgmList(){
+  try{
+    const res = await fetch(BGM_LIST_URL, { cache:"no-cache" });
+    if(!res.ok) throw new Error("bgm list");
+    const text = await res.text();
+    bgmEntries = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(l=>{
+      const p = l.split(",");
+      return { file:(p[0]||"").trim(), author:(p[1]||"").trim() };
+    }).filter(e=>e.file);
+  }catch(_){ bgmEntries = []; }
+  renderTrackSel();
+}
+function renderTrackSel(){
+  const sel = $("trackSel");
+  if(!sel) return;
+  sel.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = ""; none.textContent = "なし（ビープ音）";
+  sel.appendChild(none);
+  for(const e of bgmEntries){
+    const o = document.createElement("option");
+    o.value = e.file;
+    o.textContent = e.file.replace(/\.mp3$/i,"") + (e.author? "（"+e.author+"）" : "");
+    sel.appendChild(o);
+  }
+  if(trackName && !bgmEntries.some(e=>e.file===trackName)){
+    const o = document.createElement("option");
+    o.value = trackName; o.textContent = trackName;
+    sel.appendChild(o);
+  }
+  sel.value = trackName;
+  updateTrackHint();
+}
+async function updateTrackHint(){
+  const h = $("trackHint");
+  if(!h) return;
+  if(!trackName){ h.textContent = "曲を指定すると各端末にダウンロードされ、鳴動時に再生されます。見つからない場合はビープ音になります。"; return; }
+  if(await trackCached(trackName)){ h.textContent = "「"+trackName+"」はこの端末にダウンロード済みです。"; return; }
+  h.textContent = "「"+trackName+"」をダウンロード中…";
+  const ok = await downloadTrack(trackName);
+  h.textContent = ok? "「"+trackName+"」はこの端末にダウンロード済みです。" : "「"+trackName+"」のダウンロードに失敗しました。鳴動時はビープ音になります。";
+}
+function stopSoundOnly(){ if(audioTimer){ clearInterval(audioTimer); audioTimer=null; } stopTrack(); }
 function startVibration(){
   if(!navigator.vibrate) return;
   stopVibration();
@@ -551,14 +645,21 @@ async function onSignedIn(){
     devices = snap.docs.map(d=>({ id:d.id, ...d.data() }));
     renderDevices();
   }));
-  // 同期設定（音ON/OFF）：他端末で切り替えたらこの端末にも反映する
+  // 同期設定（音ON/OFF・鳴動曲）：他端末で切り替えたらこの端末にも反映する
   unsubs.push(fsM.onSnapshot(r.settingsDoc, (snap)=>{
     if(!snap.exists()) return;
-    const v = snap.data().soundEnabled;
+    const data = snap.data();
+    const v = data.soundEnabled;
     if(typeof v === "boolean" && v !== audioEnabled){
       audioEnabled = v;
       localStorage.setItem(LS.audio, v? "1":"0");
       renderToggles();
+    }
+    const t = data.trackName;
+    if(typeof t === "string" && t !== trackName){
+      trackName = t;
+      localStorage.setItem(LS.track, t);
+      renderTrackSel();
     }
   }));
   setInterval(schedulerTick, 250);
@@ -645,7 +746,8 @@ $("modalSaveBtn").addEventListener("click", async ()=>{
   const days = [...document.querySelectorAll("#modalDays input:checked")].map(x=>Number(x.value));
   const { fsM, db } = fb;
   if(editingId){
-    await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",editingId), { time, label, days });
+    // 編集したら必ず有効化する
+    await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",editingId), { time, label, days, enabled:true });
   } else {
     const r = refs();
     await fsM.addDoc(r.alarmsCol, { time, label, days, enabled:true, createdAt: fsM.serverTimestamp() });
@@ -729,7 +831,19 @@ document.addEventListener("visibilitychange", ()=>{
 $("stopBtn").addEventListener("click", ()=>{ doStop(false).catch(()=>{}); });
 $("snoozeBtn").addEventListener("click", ()=>{ doSnooze().catch(()=>{}); });
 
+$("trackSel").addEventListener("change", ()=>{
+  trackName = $("trackSel").value;
+  localStorage.setItem(LS.track, trackName);
+  // 全端末へ同期する（各端末は受け取った時点で曲をダウンロードする）
+  if(fb && user){
+    const { fsM } = fb; const r = refs();
+    fsM.setDoc(r.settingsDoc, { trackName: trackName, trackUpdatedBy: deviceName||"端末", trackUpdatedAt: fsM.serverTimestamp() }, { merge:true }).catch(()=>{});
+  }
+  updateTrackHint();
+});
+
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+loadBgmList();
 boot();
 </script>
 </body>
