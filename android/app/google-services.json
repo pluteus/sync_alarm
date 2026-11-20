@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "805263499745",
+    "project_id": "sync-alerm",
+    "storage_bucket": "sync-alerm.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:805263499745:android:80c3ffa1ded8f9fadbf2a0",
+        "android_client_info": {
+          "package_name": "com.pluteus.syncalarm"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "805263499745-lobhjcaoot76081sdut0bn3ug5ubk80m.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBVZJUKNWdv6M5-6hrDI9Da4aTOpChx158"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "805263499745-lobhjcaoot76081sdut0bn3ug5ubk80m.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
