@@ -115,6 +115,20 @@
             android:layout_height="wrap_content"
             android:text="電池の最適化から除外する" />
 
+        <Button
+            android:id="@+id/autostartBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="自動起動・バックグラウンド許可（メーカー設定）" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="端末によっては、メーカーの省電力設定で止められて鳴らないことがあります。上のボタンから設定画面を開き、「同期アラーム」について次を確認してください。&#10;・Xiaomi/HyperOS等：バッテリー使用量→「バックグラウンドアクティビティを許可」と「自動起動を許可」をON。または消費電力詳細→起動設定で「自動的に管理」をOFF、「自動起動」「バックグラウンドで実行」をON&#10;・OPPO等：電源→バッテリーセーバー→「制限なし」&#10;・Samsung等：アプリのバッテリー使用量→「バックグラウンドでの使用を許可」をON"
+            android:textColor="@color/muted"
+            android:textSize="12sp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

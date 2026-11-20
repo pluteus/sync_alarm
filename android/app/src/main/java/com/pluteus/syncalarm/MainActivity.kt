@@ -3,6 +3,7 @@ package com.pluteus.syncalarm
 import android.Manifest
 import android.app.AlarmManager
 import android.app.AlertDialog
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -676,6 +677,39 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }
+        }
+        dlg.autostartBtn.setOnClickListener {
+            // メーカー独自の自動起動・バックグラウンド管理画面を試し、無ければアプリ情報へ
+            val candidates = listOf(
+                ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
+                ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
+                ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity"),
+                ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
+                ComponentName("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"),
+                ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
+                ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"),
+                ComponentName("com.samsung.android.lool", "com.samsung.android.sm.ui.battery.BatteryActivity")
+            )
+            var opened = false
+            for (cn in candidates) {
+                try {
+                    startActivity(Intent().setComponent(cn))
+                    opened = true
+                    break
+                } catch (e: Exception) { /* 次の候補へ */ }
+            }
+            if (!opened) {
+                try {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                    opened = true
+                } catch (e: Exception) { }
+            }
+            Toast.makeText(
+                this,
+                if (opened) "設定画面で「同期アラーム」の自動起動とバックグラウンド実行を許可してください"
+                else "設定画面を開けませんでした。端末の設定からアプリ情報を開いてください",
+                Toast.LENGTH_LONG
+            ).show()
         }
         fun refreshExact() {
             val am = getSystemService(AlarmManager::class.java)
