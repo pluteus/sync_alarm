@@ -190,6 +190,18 @@
     <label>🎵 鳴動曲（全端末で同期）</label>
     <select id="trackSel"><option value="">なし（ビープ音）</option></select>
     <p class="sub" id="trackHint"></p>
+    <label>🕐 時刻サーバー（全端末で同期）</label>
+    <select id="ntpSel">
+      <option value="ntp.nict.jp">ntp.nict.jp</option>
+      <option value="time.google.com">time.google.com</option>
+      <option value="time.asia.apple.com">time.asia.apple.com</option>
+      <option value="time.apple.com">time.apple.com</option>
+      <option value="time.windows.com">time.windows.com</option>
+    </select>
+    <div class="row" style="margin-top:8px">
+      <button id="syncTimeBtn">時刻を同期（全端末）</button>
+    </div>
+    <p class="sub" id="timeSyncState"></p>
     <div class="row" style="margin-top:8px">
       <button id="vibBtn">📳 バイブのテスト</button>
     </div>
@@ -248,13 +260,15 @@
     <div class="row">
       <div>
         <label>時間</label>
-        <input type="number" id="timerHours" min="0" max="99" value="0">
+        <select id="timerHours"></select>
       </div>
       <div>
         <label>分</label>
-        <input type="number" id="timerMinutes" min="0" max="59" value="10">
+        <select id="timerMinutes"></select>
       </div>
     </div>
+    <label>数字4桁でも入力できます（例：0130＝1時間30分）</label>
+    <input id="timerDigits" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="0130">
     <p class="sub">時間：分で指定します。セットすると全端末でカウントダウンし、同時に鳴ります。</p>
     <label>ラベル（任意）</label>
     <input id="timerLabel" placeholder="例：カップ麺">
@@ -280,7 +294,7 @@
 <script src="firebase-config.js"></script>
 <script type="module">
 const $ = (id)=>document.getElementById(id);
-const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName" };
+const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName", ntp:"syncAlarm.timeServer" };
 const DAYNAMES = ["日","月","火","水","木","金","土"];
 
 let fb = null;          // {app, auth, db, fns...}
@@ -305,6 +319,8 @@ const BGM_LIST_URL = "https://pluteus.github.io/man_in_the_mirror/bgm.txt";
 const BGM_BASE = "https://pluteus.github.io/man_in_the_mirror/bgm/";
 const BGM_CACHE = "sync-alarm-bgm-v1";
 let trackName = localStorage.getItem(LS.track) || "";
+let timeServer = localStorage.getItem(LS.ntp) || "ntp.nict.jp";
+let lastSyncNonce = null;
 let bgmEntries = [];
 let musicAudio = null, musicUrl = null;
 function trackUrl(name){ return BGM_BASE + encodeURIComponent(name.normalize("NFC")); }
@@ -335,7 +351,13 @@ function show(view){
 }
 
 /* ---------- モーダル ---------- */
-function openSettings(){ $("settingsModal").classList.add("show"); renderDevices(); }
+function openSettings(){ $("settingsModal").classList.add("show"); renderDevices(); updateTimeSyncState(); }
+function updateTimeSyncState(){
+  const el = $("timeSyncState");
+  if(!el) return;
+  const sec = offsetMs / 1000;
+  el.textContent = "この端末のずれ：約 " + (sec >= 0 ? "+" : "") + sec.toFixed(2) + " 秒（ブラウザではNTP（UDP）を直接使えないため、Firestoreのサーバー時刻で補正しています。Android版は選択したサーバーへ実測します）";
+}
 function closeSettings(){ $("settingsModal").classList.remove("show"); }
 function openAlarmModal(alarm){
   if(alarm){
@@ -349,7 +371,8 @@ function openAlarmModal(alarm){
     editingId = null;
     $("alarmModalTitle").textContent = "アラームを追加";
     $("modalSaveBtn").textContent = "追加する";
-    $("modalTime").value = "07:00";
+    // 追加時のデフォルト時刻は現在時刻
+    $("modalTime").value = fmtClock(nowSrv()).slice(0,5);
     $("modalLabel").value = "";
     document.querySelectorAll("#modalDays input").forEach(x=>{ x.checked = false; });
   }
@@ -361,10 +384,21 @@ function syncDigitsFromTime(){
   const v = $("modalTime").value || "";
   if(/^\d{2}:\d{2}$/.test(v)) $("modalTimeDigits").value = v.replace(":","");
 }
+function fillTimerSelects(){
+  const hs = $("timerHours"), ms = $("timerMinutes");
+  if(!hs || hs.options.length) return;
+  for(let i=0; i<=99; i++){ const o = document.createElement("option"); o.value = String(i); o.textContent = String(i); hs.appendChild(o); }
+  for(let i=0; i<=59; i++){ const o = document.createElement("option"); o.value = String(i); o.textContent = String(i); ms.appendChild(o); }
+}
+function syncTimerDigits(){
+  $("timerDigits").value = pad(Number($("timerHours").value)||0) + pad(Number($("timerMinutes").value)||0);
+}
 function openTimerModal(){
+  fillTimerSelects();
   $("timerHours").value = "0";
   $("timerMinutes").value = "10";
   $("timerLabel").value = "";
+  syncTimerDigits();
   $("timerModal").classList.add("show");
 }
 function closeTimerModal(){ $("timerModal").classList.remove("show"); }
@@ -688,7 +722,9 @@ async function onSignedIn(){
   const { fsM } = fb; const r = refs();
   renderToggles();
   acquireWakeLock();
+  if($("ntpSel")) $("ntpSel").value = timeServer;
   await calibrate();
+  updateTimeSyncState();
   setInterval(calibrate, 10*60*1000);
   // ハートビート
   const beat = async ()=>{
@@ -739,6 +775,20 @@ async function onSignedIn(){
       trackName = t;
       localStorage.setItem(LS.track, t);
       renderTrackSel();
+    }
+    const srv = data.timeServer;
+    if(typeof srv === "string" && srv && srv !== timeServer){
+      timeServer = srv;
+      localStorage.setItem(LS.ntp, srv);
+      if($("ntpSel")) $("ntpSel").value = srv;
+    }
+    // 時刻の一斉同期リクエストを受けたら、この端末も補正し直す
+    const nonce = data.syncRequestedAt;
+    if(typeof nonce === "number"){
+      if(lastSyncNonce !== null && nonce !== lastSyncNonce){
+        calibrate().then(()=> updateTimeSyncState()).catch(()=>{});
+      }
+      lastSyncNonce = nonce;
     }
   }));
   setInterval(schedulerTick, 250);
@@ -854,6 +904,15 @@ $("modalTimeDigits").addEventListener("input", ()=>{
   if(s.length === 4){
     const h = Number(s.slice(0,2)), m = Number(s.slice(2,4));
     if(h <= 23 && m <= 59) $("modalTime").value = pad(h) + ":" + pad(m);
+  }
+});
+$("timerHours").addEventListener("change", syncTimerDigits);
+$("timerMinutes").addEventListener("change", syncTimerDigits);
+$("timerDigits").addEventListener("input", ()=>{
+  const s = $("timerDigits").value.replace(/\D/g, "");
+  if(s.length === 4){
+    const h = Number(s.slice(0,2)), m = Number(s.slice(2,4));
+    if(m <= 59){ $("timerHours").value = String(h); $("timerMinutes").value = String(m); }
   }
 });
 $("openTimerBtn").addEventListener("click", openTimerModal);
@@ -976,7 +1035,30 @@ $("trackSel").addEventListener("change", ()=>{
   updateTrackHint();
 });
 
+$("ntpSel").addEventListener("change", ()=>{
+  timeServer = $("ntpSel").value;
+  localStorage.setItem(LS.ntp, timeServer);
+  // 全端末へ同期する（Android版は新しいサーバーで補正し直す）
+  if(fb && user){
+    const { fsM } = fb; const r = refs();
+    fsM.setDoc(r.settingsDoc, { timeServer: timeServer, timeUpdatedBy: deviceName||"端末", timeUpdatedAt: fsM.serverTimestamp() }, { merge:true }).catch(()=>{});
+  }
+});
+$("syncTimeBtn").addEventListener("click", async ()=>{
+  // 全端末へ一斉同期を依頼し、この端末も即補正する
+  if(fb && user){
+    const { fsM } = fb; const r = refs();
+    const nonce = Date.now();
+    lastSyncNonce = nonce;
+    await fsM.setDoc(r.settingsDoc, { timeServer: timeServer, syncRequestedAt: nonce, syncRequestedBy: deviceName||"端末" }, { merge:true }).catch(()=>{});
+  }
+  await calibrate();
+  updateTimeSyncState();
+});
+
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+if($("ntpSel")) $("ntpSel").value = timeServer;
+fillTimerSelects();
 loadBgmList();
 boot();
 </script>
