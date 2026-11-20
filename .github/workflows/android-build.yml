@@ -1,0 +1,77 @@
+name: Android APK
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Prepare signing key and Firebase config
+        run: |
+          if [ -f android/debug.keystore.b64 ]; then
+            base64 -d android/debug.keystore.b64 > android/app/debug.keystore
+            echo "signing with fixed debug key"
+          fi
+          if [ ! -f android/app/google-services.json ]; then
+            echo "::warning::google-services.json missing - building with placeholder"
+            cat > android/app/google-services.json << 'JSON'
+          {
+            "project_info": {
+              "project_number": "805263499745",
+              "project_id": "sync-alerm",
+              "storage_bucket": "sync-alerm.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:805263499745:android:0000000000000000000000",
+                  "android_client_info": { "package_name": "com.pluteus.syncalarm" }
+                },
+                "oauth_client": [
+                  { "client_id": "805263499745-placeholder.apps.googleusercontent.com", "client_type": 3 }
+                ],
+                "api_key": [
+                  { "current_key": "AIzaSyAnguTbzKEORIgblOV857IAMZ7_4JKHHQw" }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": [
+                      { "client_id": "805263499745-placeholder.apps.googleusercontent.com", "client_type": 3 }
+                    ]
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+          fi
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sync-alarm-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
