@@ -1,0 +1,41 @@
+# 同期アラーム Android版
+
+PWA版（Firebase版）と**同じ Firebase プロジェクト（sync-alerm）・同じ Firestore 構造**を使う Android ネイティブ版です。
+データが共通なので、Android同士はもちろん、**Androidで鳴ったアラームをPWA（iPhone等）で止める**こともできます。
+
+## PWA版との違い（スリープ対応）
+
+- 発火は OS の **AlarmManager（setAlarmClock）** が担うため、**アプリを閉じていても・スリープ中・Doze中でも時刻どおりに鳴ります**
+- ロック画面の上に鳴動画面が出て、画面が自動で点灯します
+- 再起動しても BootReceiver + WorkManager が自動でスケジュールを組み直します
+- 鳴動中の停止/スヌーズは Firestore 経由で全端末に即伝わります（鳴動中は端末が起きているため）
+
+## 正直な制約
+
+- **他端末で追加した新しいアラーム**がスリープ中の端末に届くのは、その端末が次に目覚めたとき（定期同期＝最大15分間隔、またはアプリを開いたとき）です。15分以上先のアラームなら実用上問題ありませんが、「今すぐ1分後に鳴らす」ような使い方は他端末に間に合わないことがあります
+- テスト鳴動の他端末追随は、アプリを開いている端末だけです（PWA版と同じ）
+- iPhone は iOS の仕様上この方式が使えないため、従来どおりPWA版（開いている間だけ確実）です
+
+## セットアップ（初回のみ・Firebaseコンソール作業）
+
+1. [Firebaseコンソール](https://console.firebase.google.com/) でプロジェクト **sync-alerm** を開く
+2. プロジェクトの概要 → 「アプリを追加」→ **Android** を選ぶ
+   - Android パッケージ名：`com.pluteus.syncalarm`
+   - デバッグ用署名証明書 SHA-1：`android/SHA1.txt` に記載の値（固定デバッグ鍵のもの。全ビルド共通）
+3. **google-services.json** をダウンロードする
+4. そのファイルを `android/app/google-services.json` に置く（このチャットに渡してくれれば反映します）
+5. GitHub の Actions タブ → 「Android APK」の最新実行 → Artifacts の **sync-alarm-debug-apk** をダウンロードして端末にインストールする
+   （google-services.json を置く前でもビルドは通りますが、そのAPKはログインできません）
+
+## 端末での初回設定
+
+1. アプリを開いて **PWAと同じGoogleアカウント** でログイン
+2. 通知の許可を出す
+3. ⚙️設定から「電池の最適化から除外」を済ませる（正確なアラームは原則許可済みですが、機種によっては確認）
+4. アラームはPWA版と自動で同期されます
+
+## ビルドの仕組み
+
+- GitHub Actions（`.github/workflows/android-build.yml`）が push のたびにデバッグAPKを自動ビルドします
+- 署名は `android/debug.keystore.b64`（固定デバッグ鍵、Base64化したもの）を使い、毎回同じ SHA-1 になります
+- ローカルで Android Studio から開く場合は `android/` フォルダを開いてください（初回に Gradle Wrapper が生成されます）

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#160B00"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/testBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@color/accent"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:text="テスト鳴動中"
+        android:textColor="#231600"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/ringTimeText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="07:00"
+        android:textColor="@color/text"
+        android:textSize="76sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/ringLabelText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/accent"
+        android:textSize="20sp" />
+
+    <Button
+        android:id="@+id/stopBtn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="28dp"
+        android:backgroundTint="@color/danger"
+        android:paddingStart="54dp"
+        android:paddingEnd="54dp"
+        android:paddingTop="18dp"
+        android:paddingBottom="18dp"
+        android:text="止める"
+        android:textColor="#FFFFFF"
+        android:textSize="22sp" />
+
+    <Button
+        android:id="@+id/snoozeBtn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:paddingStart="30dp"
+        android:paddingEnd="30dp"
+        android:text="スヌーズ（5分）"
+        android:textSize="16sp" />
+</LinearLayout>
