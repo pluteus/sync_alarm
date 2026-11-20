@@ -1,6 +1,6 @@
 // 同期アラーム Service Worker
 // アプリ本体（シェル）だけをキャッシュし、Firebaseとの通信は常にネットワークを使う。
-const CACHE = "sync-alarm-v4";
+const CACHE = "sync-alarm-v5";
 const SHELL = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {

@@ -385,6 +385,7 @@ function refs(){
   return {
     alarmsCol: fsM.collection(db, "users", uid, "alarms"),
     stateDoc: fsM.doc(db, "users", uid, "state", "current"),
+    settingsDoc: fsM.doc(db, "users", uid, "settings", "app"),
     devicesCol: fsM.collection(db, "users", uid, "devices"),
     pingDoc: fsM.doc(db, "users", uid, "meta", "ping"),
   };
@@ -550,6 +551,16 @@ async function onSignedIn(){
     devices = snap.docs.map(d=>({ id:d.id, ...d.data() }));
     renderDevices();
   }));
+  // 同期設定（音ON/OFF）：他端末で切り替えたらこの端末にも反映する
+  unsubs.push(fsM.onSnapshot(r.settingsDoc, (snap)=>{
+    if(!snap.exists()) return;
+    const v = snap.data().soundEnabled;
+    if(typeof v === "boolean" && v !== audioEnabled){
+      audioEnabled = v;
+      localStorage.setItem(LS.audio, v? "1":"0");
+      renderToggles();
+    }
+  }));
   setInterval(schedulerTick, 250);
   schedulerTick();
 }
@@ -658,7 +669,7 @@ $("saveDeviceNameBtn").addEventListener("click", async ()=>{
   await fsM.setDoc(fsM.doc(db,"users",user.uid,"devices",deviceId), { name: deviceName||"（名前なし）", lastSeen: fsM.serverTimestamp() }, { merge:true });
 });
 function renderToggles(){
-  $("audioBtn").textContent = audioEnabled? "🔊 音：ON" : "🔇 音：OFF";
+  $("audioBtn").textContent = audioEnabled? "🔊 音：ON（同期）" : "🔇 音：OFF（同期）";
   $("wakeBtn").textContent = wakeEnabled? "画面ON維持：ON" : "画面ON維持：OFF";
 }
 async function acquireWakeLock(){
@@ -674,6 +685,11 @@ $("audioBtn").addEventListener("click", ()=>{
   localStorage.setItem(LS.audio, audioEnabled? "1":"0");
   if(audioEnabled && ensureAudio()){ beep(880,0.12,0); beep(1174,0.18,0.16); }
   renderToggles();
+  // 全端末へ同期する
+  if(fb && user){
+    const { fsM } = fb; const r = refs();
+    fsM.setDoc(r.settingsDoc, { soundEnabled: audioEnabled, soundUpdatedBy: deviceName||"端末", soundUpdatedAt: fsM.serverTimestamp() }, { merge:true }).catch(()=>{});
+  }
 });
 // 画面のどこかをタップしたら、音（デフォルトON）の準備と画面ON維持を自動で有効化する
 document.addEventListener("pointerdown", ()=>{
