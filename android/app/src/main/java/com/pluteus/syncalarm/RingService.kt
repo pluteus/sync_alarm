@@ -12,6 +12,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -51,6 +52,7 @@ class RingService : Service() {
     }
 
     private var audioTrack: AudioTrack? = null
+    private var mediaPlayer: MediaPlayer? = null
     private var focusRequest: AudioFocusRequest? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var stateReg: ListenerRegistration? = null
@@ -88,7 +90,7 @@ class RingService : Service() {
 
         startForeground(NOTIF_ID, buildNotification())
         acquireWakeLock()
-        if (Prefs.soundEnabled(this)) startSound()
+        if (Prefs.soundEnabled(this)) startPlayback()
         startVibrationLoop()
         openRingActivity()
         // 次回分の再スケジュール（繰り返しアラームの翌回・同期取り直し）
@@ -169,7 +171,54 @@ class RingService : Service() {
         } catch (e: Exception) { }
     }
 
-    /* ---------- 音（生成トーンを AudioTrack でループ） ---------- */
+    /* ---------- 音 ---------- */
+
+    private fun requestFocus(attrs: AudioAttributes) {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(attrs)
+                    .setOnAudioFocusChangeListener { }
+                    .build()
+                am.requestAudioFocus(focusRequest!!)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            }
+        } catch (e: Exception) { }
+    }
+
+    /**
+     * 曲が指定されていて端末内にファイルがあれば曲をループ再生し、
+     * なければデフォルトのビープ音（生成トーン）にフォールバックする。
+     */
+    private fun startPlayback() {
+        val name = Prefs.trackName(this)
+        if (name.isNotEmpty() && Bgm.exists(this, name)) {
+            try {
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                requestFocus(attrs)
+                val mp = MediaPlayer()
+                mp.setAudioAttributes(attrs)
+                mp.setDataSource(Bgm.file(this, name).absolutePath)
+                mp.isLooping = true
+                mp.prepare()
+                mp.start()
+                mediaPlayer = mp
+                return
+            } catch (e: Exception) {
+                try { mediaPlayer?.release() } catch (e2: Exception) { }
+                mediaPlayer = null
+            }
+        }
+        startSound()
+    }
+
+    /* ---------- ビープ音（生成トーンを AudioTrack でループ） ---------- */
 
     /** PWA版と同じパターン（880Hz×2 + 1174Hz、1秒ループ）の PCM を生成する。 */
     private fun buildToneBuffer(): ShortArray {
@@ -199,19 +248,7 @@ class RingService : Service() {
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build()
             // オーディオフォーカス（アラーム用途）
-            try {
-                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-                        .setAudioAttributes(attrs)
-                        .setOnAudioFocusChangeListener { }
-                        .build()
-                    am.requestAudioFocus(focusRequest!!)
-                } else {
-                    @Suppress("DEPRECATION")
-                    am.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-                }
-            } catch (e: Exception) { }
+            requestFocus(attrs)
 
             val buf = buildToneBuffer()
             val track = AudioTrack.Builder()
@@ -235,6 +272,9 @@ class RingService : Service() {
     }
 
     private fun stopSound() {
+        try { mediaPlayer?.stop() } catch (e: Exception) { }
+        try { mediaPlayer?.release() } catch (e: Exception) { }
+        mediaPlayer = null
         try { audioTrack?.stop() } catch (e: Exception) { }
         try { audioTrack?.release() } catch (e: Exception) { }
         audioTrack = null

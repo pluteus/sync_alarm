@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private var stateReg: ListenerRegistration? = null
     private var settingsReg: ListenerRegistration? = null
     private var settingsSoundRefresh: (() -> Unit)? = null
+    private var settingsTrackRefresh: (() -> Unit)? = null
     private var stateMap: Map<String, Any?>? = null
     private val handler = Handler(Looper.getMainLooper())
     private var testRingActive = false
@@ -185,15 +186,24 @@ class MainActivity : AppCompatActivity() {
             renderStateMsg()
             handleTestState()
         }
-        // 同期設定（音ON/OFF）：他端末で切り替えたらこの端末にも反映する
+        // 同期設定（音ON/OFF・鳴動曲）：他端末で切り替えたらこの端末にも反映する
         val sDoc = Repo.settingsDoc(uid)
         settingsReg?.remove()
         settingsReg = sDoc?.addSnapshotListener { snap, _ ->
             if (snap == null || !snap.exists()) return@addSnapshotListener
-            val v = snap.getBoolean("soundEnabled") ?: return@addSnapshotListener
-            if (v != Prefs.soundEnabled(this)) {
+            val v = snap.getBoolean("soundEnabled")
+            if (v != null && v != Prefs.soundEnabled(this)) {
                 Prefs.setSoundEnabled(this, v)
                 settingsSoundRefresh?.invoke()
+            }
+            val t = snap.getString("trackName")
+            if (t != null && t != Prefs.trackName(this)) {
+                Prefs.setTrackName(this, t)
+                settingsTrackRefresh?.invoke()
+                // 指定された曲はこの端末にもダウンロードしておく
+                if (t.isNotEmpty()) {
+                    lifecycleScope.launch { Bgm.ensureDownloaded(this@MainActivity, t) }
+                }
             }
         }
         handler.removeCallbacks(heartbeat)
@@ -334,7 +344,8 @@ class MainActivity : AppCompatActivity() {
                 val days = dayBoxes.filter { it.first.isChecked }.map { it.second }
                 val col = Repo.alarmsCol(uid) ?: return@setPositiveButton
                 if (existing != null) {
-                    col.document(existing.id).update(mapOf("time" to time, "label" to label, "days" to days))
+                    // 編集したら必ず有効化する
+                    col.document(existing.id).update(mapOf("time" to time, "label" to label, "days" to days, "enabled" to true))
                 } else {
                     col.add(
                         mapOf(
@@ -370,6 +381,57 @@ class MainActivity : AppCompatActivity() {
             val u = Repo.uid()
             if (u != null) {
                 lifecycleScope.launch { Repo.writeSoundEnabled(u, next, Prefs.deviceName(this@MainActivity)) }
+            }
+        }
+        fun refreshTrack() {
+            val t = Prefs.trackName(this)
+            dlg.trackBtn.text = if (t.isEmpty()) "🎵 曲：なし（ビープ音）" else "🎵 曲：" + t.removeSuffix(".mp3")
+            dlg.trackHint.text = when {
+                t.isEmpty() -> "曲を指定すると各端末にダウンロードされ、鳴動時に再生されます。見つからない場合はビープ音になります。"
+                Bgm.exists(this, t) -> "「$t」はこの端末にダウンロード済みです。"
+                else -> "「$t」はまだこの端末にありません。鳴動時はビープ音になります（アプリを開いた時／定期同期で自動ダウンロードします）。"
+            }
+        }
+        refreshTrack()
+        settingsTrackRefresh = { refreshTrack() }
+        dlg.trackBtn.setOnClickListener {
+            lifecycleScope.launch {
+                val entries = Bgm.fetchList()
+                if (entries.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "曲リストを取得できませんでした", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                val labels = (listOf("なし（ビープ音）") + entries.map { e ->
+                    e.file.removeSuffix(".mp3") + if (e.author.isNotEmpty()) "（${e.author}）" else ""
+                }).toTypedArray()
+                val cur = Prefs.trackName(this@MainActivity)
+                val checked = if (cur.isEmpty()) 0 else entries.indexOfFirst { it.file == cur } + 1
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("🎵 鳴動曲を選ぶ")
+                    .setSingleChoiceItems(labels, checked) { d, which ->
+                        val name = if (which == 0) "" else entries[which - 1].file
+                        Prefs.setTrackName(this@MainActivity, name)
+                        refreshTrack()
+                        // 全端末へ同期する（各端末は受け取った時点で曲をダウンロードする）
+                        val u = Repo.uid()
+                        if (u != null) {
+                            lifecycleScope.launch { Repo.writeTrackName(u, name, Prefs.deviceName(this@MainActivity)) }
+                        }
+                        if (name.isNotEmpty()) {
+                            lifecycleScope.launch {
+                                val ok = Bgm.ensureDownloaded(this@MainActivity, name)
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "曲をダウンロードしました" else "ダウンロードに失敗しました。鳴動時はビープ音になります",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                refreshTrack()
+                            }
+                        }
+                        d.dismiss()
+                    }
+                    .setNegativeButton("キャンセル", null)
+                    .show()
             }
         }
         dlg.batteryBtn.setOnClickListener {
@@ -419,7 +481,7 @@ class MainActivity : AppCompatActivity() {
             .setView(dlg.root)
             .setNegativeButton("閉じる", null)
             .create()
-        dialog.setOnDismissListener { settingsSoundRefresh = null }
+        dialog.setOnDismissListener { settingsSoundRefresh = null; settingsTrackRefresh = null }
         dlg.logoutBtn.setOnClickListener {
             Repo.auth()?.signOut()
             try { signInClient?.signOut() } catch (e: Exception) { }

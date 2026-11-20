@@ -9,6 +9,7 @@ object Prefs {
     private const val KEY_DEV_ID = "deviceId"
     private const val KEY_DEV_NAME = "deviceName"
     private const val KEY_SOUND = "soundEnabled"
+    private const val KEY_TRACK = "trackName"
 
     private fun sp(ctx: Context) = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -34,5 +35,12 @@ object Prefs {
 
     fun setSoundEnabled(ctx: Context, on: Boolean) {
         sp(ctx).edit().putBoolean(KEY_SOUND, on).apply()
+    }
+
+    /** 鳴動曲のファイル名（全端末で同期する設定の端末側キャッシュ）。空＝ビープ音。 */
+    fun trackName(ctx: Context): String = sp(ctx).getString(KEY_TRACK, null) ?: ""
+
+    fun setTrackName(ctx: Context, name: String) {
+        sp(ctx).edit().putString(KEY_TRACK, name).apply()
     }
 }

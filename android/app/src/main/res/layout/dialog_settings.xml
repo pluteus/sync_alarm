@@ -52,6 +52,20 @@
             android:layout_height="wrap_content"
             android:text="🔊 音：ON" />
 
+        <Button
+            android:id="@+id/trackBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🎵 曲：なし（ビープ音）" />
+
+        <TextView
+            android:id="@+id/trackHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/muted"
+            android:textSize="12sp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

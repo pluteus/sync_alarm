@@ -47,6 +47,22 @@ object Repo {
         return if (d.exists() && d.contains("soundEnabled")) d.getBoolean("soundEnabled") else null
     }
 
+    suspend fun writeTrackName(uid: String, name: String, by: String) {
+        settingsDoc(uid)?.set(
+            mapOf(
+                "trackName" to name,
+                "trackUpdatedBy" to by,
+                "trackUpdatedAt" to FieldValue.serverTimestamp()
+            ),
+            com.google.firebase.firestore.SetOptions.merge()
+        )?.await()
+    }
+
+    suspend fun fetchTrackName(uid: String): String? {
+        val d = settingsDoc(uid)?.get()?.await() ?: return null
+        return if (d.exists() && d.contains("trackName")) d.getString("trackName") else null
+    }
+
     suspend fun fetchAlarms(uid: String): List<AlarmItem> {
         val col = alarmsCol(uid) ?: return emptyList()
         val snap = col.get().await()
