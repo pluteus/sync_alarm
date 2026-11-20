@@ -378,7 +378,7 @@ class MainActivity : AppCompatActivity() {
                     .setNegativeButton("キャンセル", null)
                     .show()
             }
-            container.addView(row)
+            container.addView(row.root)
         }
     }
 
