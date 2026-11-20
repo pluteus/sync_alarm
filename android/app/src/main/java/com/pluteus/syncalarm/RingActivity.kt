@@ -67,9 +67,9 @@ class RingActivity : AppCompatActivity() {
         }
         binding.snoozeBtn.setOnClickListener {
             val uid = Repo.uid()
-            val until = System.currentTimeMillis() + 5 * 60 * 1000L
+            val until = TimeSync.now(this) + 5 * 60 * 1000L
             if (uid != null) {
-                lifecycleScope.launch { Repo.writeSnooze(uid, Prefs.deviceName(this@RingActivity)) }
+                lifecycleScope.launch { Repo.writeSnooze(uid, Prefs.deviceName(this@RingActivity), until) }
             }
             AlarmScheduler.scheduleSnooze(this, until, timeText, label)
             startService(Intent(this, RingService::class.java).setAction(RingService.ACTION_LOCAL_STOP))

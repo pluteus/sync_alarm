@@ -36,14 +36,15 @@ object AlarmScheduler {
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return
         val sp = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE)
         val oldIds = sp.getStringSet(KEY_IDS, emptySet())?.toSet() ?: emptySet()
-        val now = System.currentTimeMillis()
+        // 発火時刻は補正済み時刻で計算し、AlarmManager へ渡す直前に端末時刻へ変換する
+        val now = TimeSync.now(ctx)
         val newIds = mutableSetOf<String>()
 
         for (a in alarms) {
             if (!a.enabled) continue
             val at = a.nextFire(now) ?: continue
             val pi = pending(ctx, a.id.hashCode(), ringIntent(ctx, a.id, a.time, a.label, "alarm"))
-            scheduleExact(ctx, am, at, pi)
+            scheduleExact(ctx, am, TimeSync.toDeviceTime(ctx, at), pi)
             newIds.add(a.id)
         }
         // 消えた／無効になったアラームを取り消す（extrasは PendingIntent の同一判定に含まれない）
@@ -60,13 +61,13 @@ object AlarmScheduler {
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return
         val sp = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE)
         val oldIds = sp.getStringSet(KEY_TIMER_IDS, emptySet())?.toSet() ?: emptySet()
-        val now = System.currentTimeMillis()
+        val now = TimeSync.now(ctx)
         val newIds = mutableSetOf<String>()
 
         for (t in timers) {
             if (t.endsAtMs <= now) continue
             val pi = pending(ctx, ("timer:" + t.id).hashCode(), ringIntent(ctx, t.id, t.durationText(), t.label.ifEmpty { "タイマー" }, "timer"))
-            scheduleExact(ctx, am, t.endsAtMs, pi)
+            scheduleExact(ctx, am, TimeSync.toDeviceTime(ctx, t.endsAtMs), pi)
             newIds.add(t.id)
         }
         for (id in oldIds - newIds) {
@@ -77,10 +78,11 @@ object AlarmScheduler {
         sp.edit().putStringSet(KEY_TIMER_IDS, newIds).apply()
     }
 
+    /** atMillis は補正済み時刻基準。AlarmManager へは端末時刻に変換して渡す。 */
     fun scheduleSnooze(ctx: Context, atMillis: Long, timeText: String, label: String) {
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return
         val pi = pending(ctx, SNOOZE_CODE, ringIntent(ctx, null, timeText, label, "snooze"))
-        scheduleExact(ctx, am, atMillis, pi)
+        scheduleExact(ctx, am, TimeSync.toDeviceTime(ctx, atMillis), pi)
     }
 
     fun cancelSnooze(ctx: Context) {

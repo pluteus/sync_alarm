@@ -57,6 +57,8 @@ class MainActivity : AppCompatActivity() {
     private var settingsReg: ListenerRegistration? = null
     private var settingsSoundRefresh: (() -> Unit)? = null
     private var settingsTrackRefresh: (() -> Unit)? = null
+    private var settingsTimeRefresh: (() -> Unit)? = null
+    private var lastSyncRequestedAt: Long? = null
     private var stateMap: Map<String, Any?>? = null
     private val handler = Handler(Looper.getMainLooper())
     private var testRingActive = false
@@ -105,7 +107,7 @@ class MainActivity : AppCompatActivity() {
             val uid = Repo.uid() ?: return@setOnClickListener
             Repo.stateDoc(uid)?.set(
                 mapOf(
-                    "test" to mapOf("until" to (System.currentTimeMillis() + 15000), "by" to Prefs.deviceName(this)),
+                    "test" to mapOf("until" to (TimeSync.now(this) + 15000), "by" to Prefs.deviceName(this)),
                     "updatedAt" to FieldValue.serverTimestamp()
                 ),
                 com.google.firebase.firestore.SetOptions.merge()
@@ -221,7 +223,29 @@ class MainActivity : AppCompatActivity() {
                     lifecycleScope.launch { Bgm.ensureDownloaded(this@MainActivity, t) }
                 }
             }
+            val srv = snap.getString("timeServer")
+            if (srv != null && srv != Prefs.timeServer(this)) {
+                Prefs.setTimeServer(this, srv)
+                settingsTimeRefresh?.invoke()
+                lifecycleScope.launch {
+                    TimeSync.calibrate(this@MainActivity, srv)
+                    settingsTimeRefresh?.invoke()
+                }
+            }
+            // 時刻の一斉同期リクエストを受けたら、この端末も補正し直す
+            val syncReq = (snap.get("syncRequestedAt") as? Number)?.toLong()
+            if (syncReq != null) {
+                if (lastSyncRequestedAt != null && syncReq != lastSyncRequestedAt) {
+                    lifecycleScope.launch {
+                        TimeSync.calibrate(this@MainActivity, Prefs.timeServer(this@MainActivity))
+                        settingsTimeRefresh?.invoke()
+                    }
+                }
+                lastSyncRequestedAt = syncReq
+            }
         }
+        // 起動時にも一度補正しておく
+        lifecycleScope.launch { TimeSync.calibrate(this@MainActivity, Prefs.timeServer(this@MainActivity)) }
         handler.removeCallbacks(heartbeat)
         handler.post(heartbeat)
         SyncWorker.enqueueOneTime(this)
@@ -239,7 +263,7 @@ class MainActivity : AppCompatActivity() {
     private fun handleTestState() {
         val test = stateMap?.get("test") as? Map<*, *> ?: run { testRingActive = false; return }
         val until = (test["until"] as? Number)?.toLong() ?: 0
-        if (until > System.currentTimeMillis() && !RingService.isRinging && !testRingActive) {
+        if (until > TimeSync.now(this) && !RingService.isRinging && !testRingActive) {
             testRingActive = true
             val i = Intent(this, RingService::class.java).apply {
                 action = RingService.ACTION_RING
@@ -254,7 +278,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun tickClock() {
         if (binding.mainLayout.visibility != View.VISIBLE) return
-        val now = System.currentTimeMillis()
+        val now = TimeSync.now(this)
         // タイマーの残り時間を更新する
         for (t in timers) {
             timerRemainViews[t.id]?.text = remainText(t.endsAtMs - now)
@@ -290,7 +314,7 @@ class MainActivity : AppCompatActivity() {
         val text = when {
             s == null -> ""
             s["ringing"] == true -> "🔔 鳴動中です" + ((s["startedBy"] as? String)?.let { "（$it）" } ?: "")
-            ((s["snoozeUntil"] as? Number)?.toLong() ?: 0) > System.currentTimeMillis() ->
+            ((s["snoozeUntil"] as? Number)?.toLong() ?: 0) > TimeSync.now(this) ->
                 "💤 スヌーズ中（${s["snoozedBy"] as? String ?: ""}）"
             s["stoppedBy"] != null -> "✅ 前回のアラームは ${s["stoppedBy"]} が止めました"
             else -> ""
@@ -366,7 +390,7 @@ class MainActivity : AppCompatActivity() {
             val row = ItemTimerBinding.inflate(LayoutInflater.from(this), container, false)
             row.labelText.text = t.label.ifEmpty { "タイマー" }
             row.subText.text = t.durationText() + " のタイマー（" + fmt.format(Date(t.endsAtMs)) + " 終了）"
-            row.remainText.text = remainText(t.endsAtMs - System.currentTimeMillis())
+            row.remainText.text = remainText(t.endsAtMs - TimeSync.now(this))
             timerRemainViews[t.id] = row.remainText
             row.deleteBtn.setOnClickListener {
                 AlertDialog.Builder(this)
@@ -385,14 +409,49 @@ class MainActivity : AppCompatActivity() {
     private fun showTimerDialog() {
         val uid = Repo.uid() ?: return
         val dlg = DialogTimerBinding.inflate(LayoutInflater.from(this))
-        dlg.hoursInput.setText("0")
-        dlg.minutesInput.setText("10")
+        dlg.hoursPicker.minValue = 0
+        dlg.hoursPicker.maxValue = 99
+        dlg.hoursPicker.value = 0
+        dlg.minutesPicker.minValue = 0
+        dlg.minutesPicker.maxValue = 59
+        dlg.minutesPicker.value = 10
+        // スピナーと4桁入力を相互に同期する（アラームの時刻入力と同じ方式）
+        var guard = false
+        fun syncDigits() {
+            guard = true
+            dlg.digitsInput.setText("%02d%02d".format(dlg.hoursPicker.value, dlg.minutesPicker.value))
+            guard = false
+        }
+        syncDigits()
+        val pickerListener = android.widget.NumberPicker.OnValueChangeListener { _, _, _ ->
+            if (!guard) syncDigits()
+        }
+        dlg.hoursPicker.setOnValueChangedListener(pickerListener)
+        dlg.minutesPicker.setOnValueChangedListener(pickerListener)
+        dlg.digitsInput.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                if (guard) return
+                val t = s?.toString()?.filter { it.isDigit() } ?: ""
+                if (t.length == 4) {
+                    val h = t.substring(0, 2).toInt()
+                    val m = t.substring(2, 4).toInt()
+                    if (m <= 59) {
+                        guard = true
+                        dlg.hoursPicker.value = h
+                        dlg.minutesPicker.value = m
+                        guard = false
+                    }
+                }
+            }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) { }
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { }
+        })
         AlertDialog.Builder(this)
             .setTitle("タイマーを追加")
             .setView(dlg.root)
             .setPositiveButton("スタート") { _, _ ->
-                val h = dlg.hoursInput.text.toString().toIntOrNull()?.coerceIn(0, 99) ?: 0
-                val m = dlg.minutesInput.text.toString().toIntOrNull()?.coerceIn(0, 59) ?: 0
+                val h = dlg.hoursPicker.value
+                val m = dlg.minutesPicker.value
                 val total = h * 3600000L + m * 60000L
                 if (total <= 0L) {
                     Toast.makeText(this, "時間と分を入れてください", Toast.LENGTH_SHORT).show()
@@ -405,7 +464,7 @@ class MainActivity : AppCompatActivity() {
                         "hours" to h,
                         "minutes" to m,
                         "durationMs" to total,
-                        "endsAtMs" to (System.currentTimeMillis() + total),
+                        "endsAtMs" to (TimeSync.now(this) + total),
                         "createdBy" to Prefs.deviceName(this),
                         "createdAt" to FieldValue.serverTimestamp()
                     )
@@ -429,8 +488,10 @@ class MainActivity : AppCompatActivity() {
             dlg.labelInput.setText(existing.label)
             dayBoxes.forEach { (box, v) -> box.isChecked = existing.days.contains(v) }
         } else {
-            dlg.timePicker.hour = 7
-            dlg.timePicker.minute = 0
+            // 追加時のデフォルト時刻は現在時刻（補正済み）
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = TimeSync.now(this@MainActivity) }
+            dlg.timePicker.hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+            dlg.timePicker.minute = cal.get(java.util.Calendar.MINUTE)
         }
         // 24時間制4桁入力とドラム（スピナー）を相互に同期する
         var digitsGuard = false
@@ -560,6 +621,55 @@ class MainActivity : AppCompatActivity() {
                     .show()
             }
         }
+        fun refreshTime() {
+            dlg.ntpBtn.text = "🕐 時刻サーバー：" + Prefs.timeServer(this)
+            val st = Prefs.timeSyncStatus(this)
+            dlg.timeSyncStatus.text = if (st.isEmpty())
+                "まだ同期していません。「時刻を同期」を押すと全端末いっせいに補正します。"
+            else st
+        }
+        refreshTime()
+        settingsTimeRefresh = { refreshTime() }
+        dlg.ntpBtn.setOnClickListener {
+            val servers = TimeSync.SERVERS
+            val checked = servers.indexOf(Prefs.timeServer(this)).coerceAtLeast(0)
+            AlertDialog.Builder(this)
+                .setTitle("🕐 時刻サーバーを選ぶ")
+                .setSingleChoiceItems(servers.toTypedArray(), checked) { d, which ->
+                    val server = servers[which]
+                    Prefs.setTimeServer(this, server)
+                    refreshTime()
+                    // 全端末へ同期し、この端末は新しいサーバーで補正し直す
+                    val u = Repo.uid()
+                    if (u != null) {
+                        lifecycleScope.launch {
+                            Repo.writeTimeServer(u, server, Prefs.deviceName(this@MainActivity))
+                            TimeSync.calibrate(this@MainActivity, server)
+                            refreshTime()
+                        }
+                    }
+                    d.dismiss()
+                }
+                .setNegativeButton("キャンセル", null)
+                .show()
+        }
+        dlg.syncTimeBtn.setOnClickListener {
+            val server = Prefs.timeServer(this)
+            val u = Repo.uid() ?: return@setOnClickListener
+            val nonce = System.currentTimeMillis()
+            lastSyncRequestedAt = nonce
+            lifecycleScope.launch {
+                Repo.writeSyncRequest(u, server, Prefs.deviceName(this@MainActivity), nonce)
+                // 自分も即同期する（他端末は設定の変更を受けて同期する）
+                val ok = TimeSync.calibrate(this@MainActivity, server)
+                refreshTime()
+                Toast.makeText(
+                    this@MainActivity,
+                    if (ok != null) "時刻を同期しました" else "同期に失敗しました（通信状態を確認してください）",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
         dlg.batteryBtn.setOnClickListener {
             try {
                 startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
@@ -586,7 +696,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 try {
                     val snap = Repo.devicesCol(uid)!!.get().await()
-                    val now = System.currentTimeMillis()
+                    val now = TimeSync.now(this@MainActivity)
                     val fmt = SimpleDateFormat("HH:mm", Locale.JAPAN)
                     val lines = snap.documents.map { d ->
                         val name = d.getString("name") ?: "（名前なし）"
@@ -607,7 +717,7 @@ class MainActivity : AppCompatActivity() {
             .setView(dlg.root)
             .setNegativeButton("閉じる", null)
             .create()
-        dialog.setOnDismissListener { settingsSoundRefresh = null; settingsTrackRefresh = null }
+        dialog.setOnDismissListener { settingsSoundRefresh = null; settingsTrackRefresh = null; settingsTimeRefresh = null }
         dlg.logoutBtn.setOnClickListener {
             Repo.auth()?.signOut()
             try { signInClient?.signOut() } catch (e: Exception) { }

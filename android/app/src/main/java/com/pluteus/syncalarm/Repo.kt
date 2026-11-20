@@ -66,6 +66,34 @@ object Repo {
         return if (d.exists() && d.contains("trackName")) d.getString("trackName") else null
     }
 
+    suspend fun writeTimeServer(uid: String, server: String, by: String) {
+        settingsDoc(uid)?.set(
+            mapOf(
+                "timeServer" to server,
+                "timeUpdatedBy" to by,
+                "timeUpdatedAt" to FieldValue.serverTimestamp()
+            ),
+            com.google.firebase.firestore.SetOptions.merge()
+        )?.await()
+    }
+
+    /** 時刻の一斉同期リクエスト（nonce が変わることで全端末が補正し直す）。 */
+    suspend fun writeSyncRequest(uid: String, server: String, by: String, nonce: Long) {
+        settingsDoc(uid)?.set(
+            mapOf(
+                "timeServer" to server,
+                "syncRequestedAt" to nonce,
+                "syncRequestedBy" to by
+            ),
+            com.google.firebase.firestore.SetOptions.merge()
+        )?.await()
+    }
+
+    suspend fun fetchTimeServer(uid: String): String? {
+        val d = settingsDoc(uid)?.get()?.await() ?: return null
+        return if (d.exists() && d.contains("timeServer")) d.getString("timeServer") else null
+    }
+
     suspend fun fetchAlarms(uid: String): List<AlarmItem> {
         val col = alarmsCol(uid) ?: return emptyList()
         val snap = col.get().await()
@@ -143,12 +171,12 @@ object Repo {
         }
     }
 
-    /** スヌーズ（5分）を全体へ知らせる。 */
-    suspend fun writeSnooze(uid: String, snoozedBy: String) {
+    /** スヌーズ（5分）を全体へ知らせる。untilMs は補正済み時刻基準で呼び出し側が決める。 */
+    suspend fun writeSnooze(uid: String, snoozedBy: String, untilMs: Long) {
         stateDoc(uid)?.set(
             mapOf(
                 "ringing" to false,
-                "snoozeUntil" to (System.currentTimeMillis() + 5 * 60 * 1000L),
+                "snoozeUntil" to untilMs,
                 "snoozedBy" to snoozedBy,
                 "test" to null,
                 "updatedAt" to FieldValue.serverTimestamp()

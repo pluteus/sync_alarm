@@ -20,6 +20,9 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
     override suspend fun doWork(): Result {
         val uid = Repo.uid() ?: return Result.success() // 未ログインなら何もしない
         return try {
+            // まず時刻サーバーで補正してからスケジュールを組み直す（ずれが小さいほど同時鳴動に近づく）
+            val server = Repo.fetchTimeServer(uid) ?: Prefs.timeServer(applicationContext)
+            TimeSync.calibrate(applicationContext, server)
             val alarms = Repo.fetchAlarms(uid)
             AlarmScheduler.rescheduleAll(applicationContext, alarms)
             val timers = Repo.fetchTimers(uid)

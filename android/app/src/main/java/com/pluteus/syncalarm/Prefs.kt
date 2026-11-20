@@ -10,6 +10,9 @@ object Prefs {
     private const val KEY_DEV_NAME = "deviceName"
     private const val KEY_SOUND = "soundEnabled"
     private const val KEY_TRACK = "trackName"
+    private const val KEY_TIME_SERVER = "timeServer"
+    private const val KEY_TIME_OFFSET = "timeOffsetMs"
+    private const val KEY_TIME_STATUS = "timeSyncStatus"
 
     private fun sp(ctx: Context) = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -42,5 +45,27 @@ object Prefs {
 
     fun setTrackName(ctx: Context, name: String) {
         sp(ctx).edit().putString(KEY_TRACK, name).apply()
+    }
+
+    /** 時刻サーバー（全端末で同期する設定の端末側キャッシュ）。 */
+    fun timeServer(ctx: Context): String =
+        sp(ctx).getString(KEY_TIME_SERVER, null) ?: TimeSync.DEFAULT_SERVER
+
+    fun setTimeServer(ctx: Context, server: String) {
+        sp(ctx).edit().putString(KEY_TIME_SERVER, server).apply()
+    }
+
+    /** 時刻のずれ（正しい時刻 − 端末時刻、ミリ秒）。TimeSync.calibrate が更新する。 */
+    fun timeOffsetMs(ctx: Context): Long = sp(ctx).getLong(KEY_TIME_OFFSET, 0L)
+
+    fun setTimeOffsetMs(ctx: Context, ms: Long) {
+        sp(ctx).edit().putLong(KEY_TIME_OFFSET, ms).apply()
+    }
+
+    /** 最後に成功した時刻同期の表示用ステータス。 */
+    fun timeSyncStatus(ctx: Context): String = sp(ctx).getString(KEY_TIME_STATUS, null) ?: ""
+
+    fun setTimeSyncStatus(ctx: Context, s: String) {
+        sp(ctx).edit().putString(KEY_TIME_STATUS, s).apply()
     }
 }

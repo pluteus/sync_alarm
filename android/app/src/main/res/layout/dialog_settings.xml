@@ -66,6 +66,26 @@
             android:textColor="@color/muted"
             android:textSize="12sp" />
 
+        <Button
+            android:id="@+id/ntpBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🕐 時刻サーバー：ntp.nict.jp" />
+
+        <Button
+            android:id="@+id/syncTimeBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="時刻を同期（全端末）" />
+
+        <TextView
+            android:id="@+id/timeSyncStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/muted"
+            android:textSize="12sp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

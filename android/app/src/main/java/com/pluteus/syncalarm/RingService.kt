@@ -335,7 +335,7 @@ class RingService : Service() {
             if (kind == "test") {
                 val test = snap.get("test") as? Map<*, *>
                 val until = (test?.get("until") as? Number)?.toLong() ?: 0L
-                if (test == null || until <= System.currentTimeMillis()) stopRinging()
+                if (test == null || until <= TimeSync.now(this@RingService)) stopRinging()
                 return@addSnapshotListener
             }
             val ringing = snap.getBoolean("ringing") ?: false
