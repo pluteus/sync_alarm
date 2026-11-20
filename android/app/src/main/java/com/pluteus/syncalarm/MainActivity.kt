@@ -12,6 +12,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.CheckBox
@@ -34,7 +36,9 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.pluteus.syncalarm.databinding.ActivityMainBinding
 import com.pluteus.syncalarm.databinding.DialogAlarmBinding
 import com.pluteus.syncalarm.databinding.DialogSettingsBinding
+import com.pluteus.syncalarm.databinding.DialogTimerBinding
 import com.pluteus.syncalarm.databinding.ItemAlarmBinding
+import com.pluteus.syncalarm.databinding.ItemTimerBinding
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
@@ -45,6 +49,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var signInClient: GoogleSignInClient? = null
     private var alarms: List<AlarmItem> = emptyList()
+    private var timers: List<TimerItem> = emptyList()
+    private var timersReg: ListenerRegistration? = null
+    private val timerRemainViews = mutableMapOf<String, TextView>()
     private var alarmsReg: ListenerRegistration? = null
     private var stateReg: ListenerRegistration? = null
     private var settingsReg: ListenerRegistration? = null
@@ -93,6 +100,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.settingsBtn.setOnClickListener { showSettingsDialog() }
         binding.addBtn.setOnClickListener { showAlarmDialog(null) }
+        binding.addTimerBtn.setOnClickListener { showTimerDialog() }
         binding.testBtn.setOnClickListener {
             val uid = Repo.uid() ?: return@setOnClickListener
             Repo.stateDoc(uid)?.set(
@@ -186,6 +194,14 @@ class MainActivity : AppCompatActivity() {
             renderStateMsg()
             handleTestState()
         }
+        val tCol = Repo.timersCol(uid)
+        timersReg?.remove()
+        timersReg = tCol?.addSnapshotListener { snap, _ ->
+            if (snap == null) return@addSnapshotListener
+            timers = snap.documents.map { TimerItem.fromDoc(it) }.sortedBy { it.endsAtMs }
+            renderTimers()
+            AlarmScheduler.rescheduleTimers(this, timers)
+        }
         // 同期設定（音ON/OFF・鳴動曲）：他端末で切り替えたらこの端末にも反映する
         val sDoc = Repo.settingsDoc(uid)
         settingsReg?.remove()
@@ -213,6 +229,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopMainListeners() {
         alarmsReg?.remove(); alarmsReg = null
+        timersReg?.remove(); timersReg = null
         stateReg?.remove(); stateReg = null
         settingsReg?.remove(); settingsReg = null
         handler.removeCallbacks(heartbeat)
@@ -238,6 +255,10 @@ class MainActivity : AppCompatActivity() {
     private fun tickClock() {
         if (binding.mainLayout.visibility != View.VISIBLE) return
         val now = System.currentTimeMillis()
+        // タイマーの残り時間を更新する
+        for (t in timers) {
+            timerRemainViews[t.id]?.text = remainText(t.endsAtMs - now)
+        }
         binding.clockText.text = SimpleDateFormat("HH:mm:ss", Locale.JAPAN).format(Date(now))
         binding.dateText.text = SimpleDateFormat("M月d日（E）", Locale.JAPAN).format(Date(now))
         val snoozeUntil = (stateMap?.get("snoozeUntil") as? Number)?.toLong()
@@ -318,6 +339,82 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** アラーム追加/編集ダイアログ（PWA版モーダルと同項目：時刻・ラベル・繰り返し）。 */
+    private fun remainText(remainMs: Long): String {
+        if (remainMs <= 0) return "⏰ 終了"
+        val s = remainMs / 1000
+        val h = s / 3600
+        val m = s % 3600 / 60
+        val ss = s % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, ss) else "%d:%02d".format(m, ss)
+    }
+
+    private fun renderTimers() {
+        val container = binding.timersContainer
+        container.removeAllViews()
+        timerRemainViews.clear()
+        if (timers.isEmpty()) {
+            val tv = TextView(this).apply {
+                text = "タイマーはありません。「＋ タイマーを追加」からセットできます。"
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.muted))
+                textSize = 12.5f
+            }
+            container.addView(tv)
+            return
+        }
+        val fmt = SimpleDateFormat("HH:mm", Locale.JAPAN)
+        for (t in timers) {
+            val row = ItemTimerBinding.inflate(LayoutInflater.from(this), container, false)
+            row.labelText.text = t.label.ifEmpty { "タイマー" }
+            row.subText.text = t.durationText() + " のタイマー（" + fmt.format(Date(t.endsAtMs)) + " 終了）"
+            row.remainText.text = remainText(t.endsAtMs - System.currentTimeMillis())
+            timerRemainViews[t.id] = row.remainText
+            row.deleteBtn.setOnClickListener {
+                AlertDialog.Builder(this)
+                    .setMessage("このタイマーを削除しますか？")
+                    .setPositiveButton("削除") { _, _ ->
+                        val uid = Repo.uid() ?: return@setPositiveButton
+                        Repo.timersCol(uid)?.document(t.id)?.delete()
+                    }
+                    .setNegativeButton("キャンセル", null)
+                    .show()
+            }
+            container.addView(row)
+        }
+    }
+
+    private fun showTimerDialog() {
+        val uid = Repo.uid() ?: return
+        val dlg = DialogTimerBinding.inflate(LayoutInflater.from(this))
+        dlg.hoursInput.setText("0")
+        dlg.minutesInput.setText("10")
+        AlertDialog.Builder(this)
+            .setTitle("タイマーを追加")
+            .setView(dlg.root)
+            .setPositiveButton("スタート") { _, _ ->
+                val h = dlg.hoursInput.text.toString().toIntOrNull()?.coerceIn(0, 99) ?: 0
+                val m = dlg.minutesInput.text.toString().toIntOrNull()?.coerceIn(0, 59) ?: 0
+                val total = h * 3600000L + m * 60000L
+                if (total <= 0L) {
+                    Toast.makeText(this, "時間と分を入れてください", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val label = dlg.labelInput.text.toString().trim()
+                Repo.timersCol(uid)?.add(
+                    mapOf(
+                        "label" to label,
+                        "hours" to h,
+                        "minutes" to m,
+                        "durationMs" to total,
+                        "endsAtMs" to (System.currentTimeMillis() + total),
+                        "createdBy" to Prefs.deviceName(this),
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }
+            .setNegativeButton("キャンセル", null)
+            .show()
+    }
+
     private fun showAlarmDialog(existing: AlarmItem?) {
         val uid = Repo.uid() ?: return
         val dlg = DialogAlarmBinding.inflate(LayoutInflater.from(this))
@@ -335,6 +432,35 @@ class MainActivity : AppCompatActivity() {
             dlg.timePicker.hour = 7
             dlg.timePicker.minute = 0
         }
+        // 24時間制4桁入力とドラム（スピナー）を相互に同期する
+        var digitsGuard = false
+        fun syncDigitsFromPicker() {
+            digitsGuard = true
+            dlg.digitsInput.setText("%02d%02d".format(dlg.timePicker.hour, dlg.timePicker.minute))
+            digitsGuard = false
+        }
+        syncDigitsFromPicker()
+        dlg.timePicker.setOnTimeChangedListener { _, _, _ ->
+            if (!digitsGuard) syncDigitsFromPicker()
+        }
+        dlg.digitsInput.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                if (digitsGuard) return
+                val t = s?.toString()?.filter { it.isDigit() } ?: ""
+                if (t.length == 4) {
+                    val h = t.substring(0, 2).toInt()
+                    val m = t.substring(2, 4).toInt()
+                    if (h <= 23 && m <= 59) {
+                        digitsGuard = true
+                        dlg.timePicker.hour = h
+                        dlg.timePicker.minute = m
+                        digitsGuard = false
+                    }
+                }
+            }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) { }
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { }
+        })
         AlertDialog.Builder(this)
             .setTitle(if (existing != null) "アラームを編集" else "アラームを追加")
             .setView(dlg.root)

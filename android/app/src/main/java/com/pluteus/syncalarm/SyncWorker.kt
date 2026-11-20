@@ -22,6 +22,8 @@ class SyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         return try {
             val alarms = Repo.fetchAlarms(uid)
             AlarmScheduler.rescheduleAll(applicationContext, alarms)
+            val timers = Repo.fetchTimers(uid)
+            AlarmScheduler.rescheduleTimers(applicationContext, timers)
             // 同期設定（音ON/OFF）も取り込んで端末ローカルに反映する
             Repo.fetchSoundEnabled(uid)?.let { Prefs.setSoundEnabled(applicationContext, it) }
             // 同期設定（鳴動曲）も取り込み、未ダウンロードなら取得しておく

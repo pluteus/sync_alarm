@@ -21,6 +21,9 @@ object Repo {
     fun alarmsCol(uid: String): CollectionReference? =
         db()?.collection("users")?.document(uid)?.collection("alarms")
 
+    fun timersCol(uid: String): CollectionReference? =
+        db()?.collection("users")?.document(uid)?.collection("timers")
+
     fun stateDoc(uid: String): DocumentReference? =
         db()?.collection("users")?.document(uid)?.collection("state")?.document("current")
 
@@ -68,6 +71,13 @@ object Repo {
         val snap = col.get().await()
         return snap.documents.map { AlarmItem.fromDoc(it) }
             .sortedBy { it.time }
+    }
+
+    suspend fun fetchTimers(uid: String): List<TimerItem> {
+        val col = timersCol(uid) ?: return emptyList()
+        val snap = col.get().await()
+        return snap.documents.map { TimerItem.fromDoc(it) }
+            .sortedBy { it.endsAtMs }
     }
 
     /** プレゼンス（接続中の端末）を更新する。 */
@@ -123,6 +133,13 @@ object Repo {
                     }
                 }
             } catch (e: Exception) { /* OFF化に失敗しても停止自体は成立させる */ }
+            try {
+                // タイマーは止めた端末が削除する（鳴り終わったら役目を終える）
+                val tdoc = timersCol(uid)?.document(alarmId)?.get()?.await()
+                if (tdoc != null && tdoc.exists()) {
+                    timersCol(uid)?.document(alarmId)?.delete()?.await()
+                }
+            } catch (e: Exception) { /* 削除に失敗しても停止自体は成立させる */ }
         }
     }
 

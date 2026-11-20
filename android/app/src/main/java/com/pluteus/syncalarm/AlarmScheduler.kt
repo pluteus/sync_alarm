@@ -15,6 +15,7 @@ import android.os.Build
 object AlarmScheduler {
     private const val SP = "sched_state"
     private const val KEY_IDS = "scheduled_ids"
+    private const val KEY_TIMER_IDS = "scheduled_timer_ids"
     private const val SNOOZE_CODE = -1001
 
     private fun ringIntent(ctx: Context, alarmId: String?, time: String, label: String, kind: String): Intent =
@@ -52,6 +53,28 @@ object AlarmScheduler {
             pi.cancel()
         }
         sp.edit().putStringSet(KEY_IDS, newIds).apply()
+    }
+
+    /** タイマーは終了予定時刻（絶対時刻）にそのまま登録する。過去のものは登録しない。 */
+    fun rescheduleTimers(ctx: Context, timers: List<TimerItem>) {
+        val am = ctx.getSystemService(AlarmManager::class.java) ?: return
+        val sp = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE)
+        val oldIds = sp.getStringSet(KEY_TIMER_IDS, emptySet())?.toSet() ?: emptySet()
+        val now = System.currentTimeMillis()
+        val newIds = mutableSetOf<String>()
+
+        for (t in timers) {
+            if (t.endsAtMs <= now) continue
+            val pi = pending(ctx, ("timer:" + t.id).hashCode(), ringIntent(ctx, t.id, t.durationText(), t.label.ifEmpty { "タイマー" }, "timer"))
+            scheduleExact(ctx, am, t.endsAtMs, pi)
+            newIds.add(t.id)
+        }
+        for (id in oldIds - newIds) {
+            val pi = pending(ctx, ("timer:" + id).hashCode(), Intent(ctx, RingService::class.java).apply { action = RingService.ACTION_RING })
+            try { am.cancel(pi) } catch (e: Exception) { }
+            pi.cancel()
+        }
+        sp.edit().putStringSet(KEY_TIMER_IDS, newIds).apply()
     }
 
     fun scheduleSnooze(ctx: Context, atMillis: Long, timeText: String, label: String) {

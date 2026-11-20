@@ -22,6 +22,23 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
+        android:text="数字4桁でも入力できます（24時間制・例：0730）"
+        android:textColor="@color/muted"
+        android:textSize="12.5sp" />
+
+    <EditText
+        android:id="@+id/digitsInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="0730"
+        android:inputType="number"
+        android:maxLength="4"
+        android:maxLines="1" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
         android:text="ラベル（任意）"
         android:textColor="@color/muted"
         android:textSize="12.5sp" />
