@@ -65,6 +65,24 @@
   .daypick input{display:none}
   .daypick span{display:inline-block;padding:7px 11px;border:1px solid var(--line);border-radius:999px;font-size:13px;color:var(--muted);cursor:pointer}
   .daypick input:checked + span{background:var(--accent);color:#231600;font-weight:700;border-color:transparent}
+  /* ヘッダー（タイトル＋設定アイコン） */
+  .header-row{display:flex;align-items:flex-start;gap:8px}
+  .header-row .titles{flex:1;min-width:0}
+  #settingsBtn{flex:none;width:44px;height:44px;padding:0;font-size:20px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+  /* モーダル共通 */
+  .modal-overlay{position:fixed;inset:0;background:rgba(3,5,14,.72);z-index:40;display:none;align-items:flex-end;justify-content:center;padding:0}
+  .modal-overlay.show{display:flex}
+  .modal-panel{background:var(--panel);border:1px solid var(--line);border-radius:20px 20px 0 0;width:100%;max-width:640px;max-height:88vh;overflow-y:auto;padding:18px 16px 28px}
+  @media (min-width:560px){
+    .modal-overlay{align-items:center;padding:20px}
+    .modal-panel{border-radius:20px}
+  }
+  .modal-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .modal-head h2{margin:0;flex:1;color:var(--text);font-size:17px}
+  .modal-close{flex:none;width:38px;height:38px;padding:0;border-radius:50%;font-size:16px}
+  .modal-panel h3{font-size:14px;margin:20px 0 6px;color:var(--accent)}
+  .modal-panel h3:first-of-type{margin-top:10px}
+  input[type="time"].big-time{font-size:28px;text-align:center;padding:12px}
   /* 鳴動オーバーレイ */
   #ringOverlay{position:fixed;inset:0;background:#160b00;z-index:50;display:none;flex-direction:column;
     align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center}
@@ -82,8 +100,13 @@
 </head>
 <body>
 
-<h1>⏰ 同期アラーム</h1>
-<div class="sub">複数端末で一斉に鳴って、1台で止めると全部止まる起床アラーム（Firebase版）</div>
+<div class="header-row">
+  <div class="titles">
+    <h1>⏰ 同期アラーム</h1>
+    <div class="sub">複数端末で一斉に鳴って、1台で止めると全部止まる起床アラーム（Firebase版）</div>
+  </div>
+  <button id="settingsBtn" aria-label="設定を開く" title="設定">⚙️</button>
+</div>
 
 <!-- 初期設定 -->
 <section id="setupView" class="hidden">
@@ -119,69 +142,17 @@
     <div class="dateline" id="dateline">読み込み中…</div>
     <div class="next" id="nextAlarm">次のアラームはありません</div>
     <div class="msg" id="stateMsg"></div>
-    <label>この端末の名前</label>
-    <div class="row">
-      <input id="deviceName" placeholder="例：POCO F6 Pro">
-      <button id="saveDeviceNameBtn" style="flex:0 0 auto">保存</button>
-    </div>
     <div class="row" style="margin-top:12px">
-      <button id="audioBtn">🔊 音：ON</button>
-      <button id="testBtn" class="warn">テスト鳴動</button>
-      <button id="wakeBtn">画面ON維持：ON</button>
-      <button id="vibBtn">📳 バイブのテスト</button>
+      <button id="testBtn" class="warn">テスト鳴動（15秒・全端末）</button>
     </div>
-    <p class="sub" id="vibState"></p>
-    <p class="sub" id="audioState">音と画面ON維持はデフォルトONです。音はブラウザの決まりで、画面を一度タップするまでは出ません（ログインなどのタップで自動的に有効になります）。バイブレーションは音の設定に関わらず鳴動時に作動します（iPhoneはバイブレーション非対応です）。</p>
   </div>
 
   <div class="card">
     <h2 style="margin-top:0">アラーム</h2>
     <div id="alarmList"><p class="sub">読み込み中…</p></div>
-    <hr style="border-color:var(--line)">
-    <label>時刻</label>
-    <input type="time" id="newTime" value="07:00">
-    <label>ラベル（任意）</label>
-    <input id="newLabel" placeholder="例：起床">
-    <label>繰り返し（選ばなければ一回のみ）</label>
-    <div class="daypick" id="newDays">
-      <label><input type="checkbox" value="1"><span>月</span></label>
-      <label><input type="checkbox" value="2"><span>火</span></label>
-      <label><input type="checkbox" value="3"><span>水</span></label>
-      <label><input type="checkbox" value="4"><span>木</span></label>
-      <label><input type="checkbox" value="5"><span>金</span></label>
-      <label><input type="checkbox" value="6"><span>土</span></label>
-      <label><input type="checkbox" value="0"><span>日</span></label>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" id="openAddBtn">＋ アラームを追加</button>
     </div>
-    <div class="row" style="margin-top:12px">
-      <button class="primary" id="addAlarmBtn">アラームを追加</button>
-    </div>
-  </div>
-
-  <div class="card hidden" id="editCard">
-    <h2 style="margin-top:0">アラームを編集</h2>
-    <label>時刻</label>
-    <input type="time" id="editTime">
-    <label>ラベル（任意）</label>
-    <input id="editLabel" placeholder="例：起床">
-    <label>繰り返し（選ばなければ一回のみ）</label>
-    <div class="daypick" id="editDays">
-      <label><input type="checkbox" value="1"><span>月</span></label>
-      <label><input type="checkbox" value="2"><span>火</span></label>
-      <label><input type="checkbox" value="3"><span>水</span></label>
-      <label><input type="checkbox" value="4"><span>木</span></label>
-      <label><input type="checkbox" value="5"><span>金</span></label>
-      <label><input type="checkbox" value="6"><span>土</span></label>
-      <label><input type="checkbox" value="0"><span>日</span></label>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <button class="primary" id="saveEditBtn">保存する</button>
-      <button id="cancelEditBtn">キャンセル</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2 style="margin-top:0">接続中の端末</h2>
-    <div id="deviceList"><p class="sub">読み込み中…</p></div>
   </div>
 
   <div class="note">
@@ -189,16 +160,73 @@
     Webアプリの仕様上、確実に鳴らせるのは<b>アプリを開いている間だけ</b>です。閉じている／スリープ中の端末ではOSに止められる場合があり、特にiPhoneはアプリを開いた状態が前提です。<br>
     推奨：寝る前に全端末でこのアプリを開き、充電しながら「画面ON維持」をON、音量を上げておくこと。大事な朝は端末標準アラームの併用を推奨します。
   </div>
+</section>
 
-  <div class="card">
-    <h2 style="margin-top:0">設定</h2>
+<!-- 設定モーダル -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-label="設定">
+    <div class="modal-head">
+      <h2>⚙️ 設定</h2>
+      <button class="modal-close" id="closeSettingsBtn" aria-label="設定を閉じる">✕</button>
+    </div>
+
+    <h3>この端末</h3>
+    <label>この端末の名前</label>
+    <div class="row">
+      <input id="deviceName" placeholder="例：POCO F6 Pro">
+      <button id="saveDeviceNameBtn" style="flex:0 0 auto">保存</button>
+    </div>
+
+    <h3>鳴動</h3>
+    <div class="row">
+      <button id="audioBtn">🔊 音：ON</button>
+      <button id="wakeBtn">画面ON維持：ON</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="vibBtn">📳 バイブのテスト</button>
+    </div>
+    <p class="sub" id="vibState"></p>
+    <p class="sub" id="audioState">音と画面ON維持はデフォルトONです。音はブラウザの決まりで、画面を一度タップするまでは出ません（ログインなどのタップで自動的に有効になります）。バイブレーションは音の設定に関わらず鳴動時に作動します（iPhoneはバイブレーション非対応です）。</p>
+
+    <h3>接続中の端末</h3>
+    <div id="deviceList"><p class="sub">読み込み中…</p></div>
+
+    <h3>アカウント・Firebase</h3>
     <p class="sub" id="accountLine"></p>
     <div class="row">
       <button id="reconfigBtn">Firebase設定を貼り直す</button>
       <button id="logoutBtn">ログアウト</button>
     </div>
   </div>
-</section>
+</div>
+
+<!-- アラーム追加／編集モーダル -->
+<div class="modal-overlay" id="alarmModal">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-label="アラーム設定">
+    <div class="modal-head">
+      <h2 id="alarmModalTitle">アラームを追加</h2>
+      <button class="modal-close" id="closeAlarmModalBtn" aria-label="閉じる">✕</button>
+    </div>
+    <label>時刻</label>
+    <input type="time" id="modalTime" class="big-time" value="07:00">
+    <label>ラベル（任意）</label>
+    <input id="modalLabel" placeholder="例：起床">
+    <label>繰り返し（選ばなければ一回のみ）</label>
+    <div class="daypick" id="modalDays">
+      <label><input type="checkbox" value="1"><span>月</span></label>
+      <label><input type="checkbox" value="2"><span>火</span></label>
+      <label><input type="checkbox" value="3"><span>水</span></label>
+      <label><input type="checkbox" value="4"><span>木</span></label>
+      <label><input type="checkbox" value="5"><span>金</span></label>
+      <label><input type="checkbox" value="6"><span>土</span></label>
+      <label><input type="checkbox" value="0"><span>日</span></label>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <button class="primary" id="modalSaveBtn">追加する</button>
+      <button id="modalCancelBtn">キャンセル</button>
+    </div>
+  </div>
+</div>
 
 <!-- 鳴動オーバーレイ -->
 <div id="ringOverlay">
@@ -259,6 +287,29 @@ function loadConfig(){
 function show(view){
   for(const v of ["setupView","authView","mainView"]) $(v).classList.toggle("hidden", v!==view);
 }
+
+/* ---------- モーダル ---------- */
+function openSettings(){ $("settingsModal").classList.add("show"); renderDevices(); }
+function closeSettings(){ $("settingsModal").classList.remove("show"); }
+function openAlarmModal(alarm){
+  if(alarm){
+    editingId = alarm.id;
+    $("alarmModalTitle").textContent = "アラームを編集";
+    $("modalSaveBtn").textContent = "保存する";
+    $("modalTime").value = alarm.time || "07:00";
+    $("modalLabel").value = alarm.label || "";
+    document.querySelectorAll("#modalDays input").forEach(x=>{ x.checked = (alarm.days||[]).includes(Number(x.value)); });
+  } else {
+    editingId = null;
+    $("alarmModalTitle").textContent = "アラームを追加";
+    $("modalSaveBtn").textContent = "追加する";
+    $("modalTime").value = "07:00";
+    $("modalLabel").value = "";
+    document.querySelectorAll("#modalDays input").forEach(x=>{ x.checked = false; });
+  }
+  $("alarmModal").classList.add("show");
+}
+function closeAlarmModal(){ editingId = null; $("alarmModal").classList.remove("show"); }
 
 /* ---------- Firebase 初期化 ---------- */
 async function initFirebase(cfg){
@@ -360,7 +411,7 @@ async function writeState(patch){
 
 /* ---------- スケジューラ ---------- */
 function firedKeys(){ try{ return JSON.parse(localStorage.getItem(LS.fired)||"{}"); }catch(_){ return {}; } }
-function markFired(key){ const f=firedKeys(); f[key]=Date.now(); 
+function markFired(key){ const f=firedKeys(); f[key]=Date.now();
   for(const k of Object.keys(f)) if(Date.now()-f[k] > 3*24*3600*1000) delete f[k];
   localStorage.setItem(LS.fired, JSON.stringify(f)); }
 
@@ -383,7 +434,7 @@ function schedulerTick(){
   // 次のアラーム表示
   let next = null, nextAlarm = null;
   for(const a of alarms){ if(!a.enabled) continue; const t = nextFireOf(a, now); if(t && (!next || t<next)){ next=t; nextAlarm=a; } }
-  if(state && state.snoozeUntil && state.snoozeUntil > now){ 
+  if(state && state.snoozeUntil && state.snoozeUntil > now){
     $("nextAlarm").textContent = "スヌーズ中… " + fmtClock(state.snoozeUntil).slice(0,5) + " に再び鳴ります";
   } else if(next){
     const diff = next - now;
@@ -464,16 +515,6 @@ async function boot(){
   });
 }
 
-function openEdit(a){
-  editingId = a.id;
-  $("editTime").value = a.time || "07:00";
-  $("editLabel").value = a.label || "";
-  document.querySelectorAll("#editDays input").forEach(x=>{ x.checked = (a.days||[]).includes(Number(x.value)); });
-  $("editCard").classList.remove("hidden");
-  $("editCard").scrollIntoView({ behavior:"smooth", block:"center" });
-}
-function closeEdit(){ editingId = null; $("editCard").classList.add("hidden"); }
-
 async function onSignedIn(){
   const { fsM } = fb; const r = refs();
   renderToggles();
@@ -516,7 +557,7 @@ async function onSignedIn(){
 /* ---------- 描画 ---------- */
 function renderAlarms(){
   const el = $("alarmList");
-  if(!alarms.length){ el.innerHTML = '<p class="sub">アラームはまだありません。下のフォームから追加してください。</p>'; return; }
+  if(!alarms.length){ el.innerHTML = '<p class="sub">アラームはまだありません。「＋ アラームを追加」から追加してください。</p>'; return; }
   el.innerHTML = "";
   for(const a of alarms){
     const row = document.createElement("div"); row.className = "alarm";
@@ -534,7 +575,7 @@ function renderAlarms(){
     const sl = document.createElement("span"); sl.className="slider";
     sw.append(cb, sl);
     const edit = document.createElement("button"); edit.className="iconbtn"; edit.textContent="編集";
-    edit.addEventListener("click", ()=> openEdit(a));
+    edit.addEventListener("click", ()=> openAlarmModal(a));
     const del = document.createElement("button"); del.className="iconbtn"; del.textContent="削除";
     del.addEventListener("click", async ()=>{ if(!confirm("このアラームを削除しますか？")) return;
       const { fsM, db } = fb; await fsM.deleteDoc(fsM.doc(db,"users",user.uid,"alarms",a.id)); });
@@ -544,6 +585,7 @@ function renderAlarms(){
 }
 function renderDevices(){
   const el = $("deviceList");
+  if(!el) return;
   const now = nowSrv();
   if(!devices.length){ el.innerHTML = '<p class="sub">端末情報はまだありません。</p>'; return; }
   el.innerHTML = "";
@@ -578,7 +620,28 @@ $("saveConfigBtn").addEventListener("click", ()=>{
   localStorage.setItem(LS.cfg, JSON.stringify(cfg));
   location.reload();
 });
-$("reconfigBtn").addEventListener("click", ()=>{ show("setupView"); });
+$("settingsBtn").addEventListener("click", openSettings);
+$("closeSettingsBtn").addEventListener("click", closeSettings);
+$("settingsModal").addEventListener("click", (e)=>{ if(e.target === $("settingsModal")) closeSettings(); });
+$("openAddBtn").addEventListener("click", ()=> openAlarmModal(null));
+$("closeAlarmModalBtn").addEventListener("click", closeAlarmModal);
+$("modalCancelBtn").addEventListener("click", closeAlarmModal);
+$("alarmModal").addEventListener("click", (e)=>{ if(e.target === $("alarmModal")) closeAlarmModal(); });
+$("modalSaveBtn").addEventListener("click", async ()=>{
+  const time = $("modalTime").value;
+  if(!time){ alert("時刻を入れてください"); return; }
+  const label = $("modalLabel").value.trim();
+  const days = [...document.querySelectorAll("#modalDays input:checked")].map(x=>Number(x.value));
+  const { fsM, db } = fb;
+  if(editingId){
+    await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",editingId), { time, label, days });
+  } else {
+    const r = refs();
+    await fsM.addDoc(r.alarmsCol, { time, label, days, enabled:true, createdAt: fsM.serverTimestamp() });
+  }
+  closeAlarmModal();
+});
+$("reconfigBtn").addEventListener("click", ()=>{ closeSettings(); show("setupView"); });
 $("loginPopupBtn").addEventListener("click", async ()=>{
   try{ const p = new fb.authM.GoogleAuthProvider(); await fb.authM.signInWithPopup(fb.auth, p); }
   catch(e){ $("authError").textContent = "ログインに失敗しました：" + (e && e.message || e) + "（「うまくいかない場合はこちら」も試してください）"; }
@@ -587,7 +650,7 @@ $("loginRedirectBtn").addEventListener("click", async ()=>{
   try{ const p = new fb.authM.GoogleAuthProvider(); await fb.authM.signInWithRedirect(fb.auth, p); }
   catch(e){ $("authError").textContent = "ログインに失敗しました：" + (e && e.message || e); }
 });
-$("logoutBtn").addEventListener("click", async ()=>{ await fb.authM.signOut(fb.auth); location.reload(); });
+$("logoutBtn").addEventListener("click", async ()=>{ closeSettings(); await fb.authM.signOut(fb.auth); location.reload(); });
 $("saveDeviceNameBtn").addEventListener("click", async ()=>{
   deviceName = $("deviceName").value.trim();
   localStorage.setItem(LS.devName, deviceName);
@@ -646,27 +709,6 @@ $("wakeBtn").addEventListener("click", async ()=>{
 });
 document.addEventListener("visibilitychange", ()=>{
   if(document.visibilityState==="visible") acquireWakeLock();
-});
-$("saveEditBtn").addEventListener("click", async ()=>{
-  if(!editingId) return;
-  const time = $("editTime").value;
-  if(!time){ alert("時刻を入れてください"); return; }
-  const label = $("editLabel").value.trim();
-  const days = [...document.querySelectorAll("#editDays input:checked")].map(x=>Number(x.value));
-  const { fsM, db } = fb;
-  await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",editingId), { time, label, days });
-  closeEdit();
-});
-$("cancelEditBtn").addEventListener("click", closeEdit);
-$("addAlarmBtn").addEventListener("click", async ()=>{
-  const time = $("newTime").value;
-  if(!time){ alert("時刻を入れてください"); return; }
-  const label = $("newLabel").value.trim();
-  const days = [...document.querySelectorAll("#newDays input:checked")].map(x=>Number(x.value));
-  const { fsM } = fb; const r = refs();
-  await fsM.addDoc(r.alarmsCol, { time, label, days, enabled:true, createdAt: fsM.serverTimestamp() });
-  $("newLabel").value = "";
-  document.querySelectorAll("#newDays input:checked").forEach(x=>x.checked=false);
 });
 $("stopBtn").addEventListener("click", ()=>{ doStop(false).catch(()=>{}); });
 $("snoozeBtn").addEventListener("click", ()=>{ doSnooze().catch(()=>{}); });
