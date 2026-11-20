@@ -153,6 +153,11 @@
     <div class="row" style="margin-top:14px">
       <button class="primary" id="openAddBtn">＋ アラームを追加</button>
     </div>
+    <h2 style="margin-top:22px">タイマー</h2>
+    <div id="timerList"><p class="sub">タイマーはありません。</p></div>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" id="openTimerBtn">＋ タイマーを追加</button>
+    </div>
   </div>
 
   <div class="note">
@@ -212,6 +217,8 @@
     </div>
     <label>時刻</label>
     <input type="time" id="modalTime" class="big-time" value="07:00">
+    <label>数字4桁でも入力できます（24時間制・例：0730）</label>
+    <input id="modalTimeDigits" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="0730">
     <label>ラベル（任意）</label>
     <input id="modalLabel" placeholder="例：起床">
     <label>繰り返し（選ばなければ一回のみ）</label>
@@ -227,6 +234,33 @@
     <div class="row" style="margin-top:16px">
       <button class="primary" id="modalSaveBtn">追加する</button>
       <button id="modalCancelBtn">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- タイマー追加モーダル -->
+<div class="modal-overlay" id="timerModal">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-label="タイマーを追加">
+    <div class="modal-head">
+      <h2>タイマーを追加</h2>
+      <button class="modal-close" id="closeTimerModalBtn" aria-label="閉じる">✕</button>
+    </div>
+    <div class="row">
+      <div>
+        <label>時間</label>
+        <input type="number" id="timerHours" min="0" max="99" value="0">
+      </div>
+      <div>
+        <label>分</label>
+        <input type="number" id="timerMinutes" min="0" max="59" value="10">
+      </div>
+    </div>
+    <p class="sub">時間：分で指定します。セットすると全端末でカウントダウンし、同時に鳴ります。</p>
+    <label>ラベル（任意）</label>
+    <input id="timerLabel" placeholder="例：カップ麺">
+    <div class="row" style="margin-top:16px">
+      <button class="primary" id="timerSaveBtn">スタート</button>
+      <button id="timerCancelBtn">キャンセル</button>
     </div>
   </div>
 </div>
@@ -255,6 +289,7 @@ let deviceId = localStorage.getItem(LS.devId);
 if(!deviceId){ deviceId = "dev-" + Math.random().toString(36).slice(2,10) + Date.now().toString(36); localStorage.setItem(LS.devId, deviceId); }
 let deviceName = localStorage.getItem(LS.devName) || "";
 let alarms = [];        // {id,time,label,days,enabled}
+let timers = [];        // {id,label,durationMs,endsAtMs}
 let state = null;       // state/current
 let devices = [];
 let offsetMs = 0;       // サーバー時刻 - 端末時刻
@@ -318,9 +353,21 @@ function openAlarmModal(alarm){
     $("modalLabel").value = "";
     document.querySelectorAll("#modalDays input").forEach(x=>{ x.checked = false; });
   }
+  syncDigitsFromTime();
   $("alarmModal").classList.add("show");
 }
 function closeAlarmModal(){ editingId = null; $("alarmModal").classList.remove("show"); }
+function syncDigitsFromTime(){
+  const v = $("modalTime").value || "";
+  if(/^\d{2}:\d{2}$/.test(v)) $("modalTimeDigits").value = v.replace(":","");
+}
+function openTimerModal(){
+  $("timerHours").value = "0";
+  $("timerMinutes").value = "10";
+  $("timerLabel").value = "";
+  $("timerModal").classList.add("show");
+}
+function closeTimerModal(){ $("timerModal").classList.remove("show"); }
 
 /* ---------- Firebase 初期化 ---------- */
 async function initFirebase(cfg){
@@ -478,6 +525,7 @@ function refs(){
   const { fsM, db } = fb; const uid = user.uid;
   return {
     alarmsCol: fsM.collection(db, "users", uid, "alarms"),
+    timersCol: fsM.collection(db, "users", uid, "timers"),
     stateDoc: fsM.doc(db, "users", uid, "state", "current"),
     settingsDoc: fsM.doc(db, "users", uid, "settings", "app"),
     devicesCol: fsM.collection(db, "users", uid, "devices"),
@@ -553,6 +601,26 @@ function schedulerTick(){
       }
     }
   }
+  // タイマーのカウントダウン表示と発火判定
+  for(const t of timers){
+    if(!t.endsAtMs) continue;
+    const remain = t.endsAtMs - now;
+    const el = document.getElementById("timerRemain-" + t.id);
+    if(el) el.textContent = remain > 0 ? fmtRemain(remain) : "⏰ 終了";
+    if(remain <= 0){
+      const key = "timer:" + t.id + "@" + t.endsAtMs;
+      if(!firedKeys()[key]){
+        markFired(key);
+        const label = t.label || "タイマー";
+        startRing("alarm", label, durationText(t.durationMs), "");
+        writeState({ ringing:true, alarmId:t.id, label, timeText:durationText(t.durationMs), startedBy:deviceName||"端末", snoozeUntil:null, test:null, startedAtMs: nowSrv() }).catch(()=>{});
+      } else if(now - t.endsAtMs > 10*60*1000 && !(state && state.ringing && state.alarmId===t.id)){
+        // 鳴り終わって放置されたタイマーを掃除する
+        const { fsM, db } = fb;
+        fsM.deleteDoc(fsM.doc(db,"users",user.uid,"timers",t.id)).catch(()=>{});
+      }
+    }
+  }
   // スヌーズ再鳴動
   if(state && state.snoozeUntil && now >= state.snoozeUntil && !state.ringing){
     writeState({ ringing:true, snoozeUntil:null, startedAtMs: nowSrv() }).catch(()=>{});
@@ -579,6 +647,12 @@ async function doStop(auto){
     if(a && (!a.days || !a.days.length)){
       const { fsM, db } = fb;
       await fsM.updateDoc(fsM.doc(db, "users", user.uid, "alarms", a.id), { enabled:false }).catch(()=>{});
+    }
+    // タイマーは止めた端末が削除する（鳴り終わったら役目を終える）
+    const t = timers.find(x=>x.id===wasAlarm);
+    if(t){
+      const { fsM, db } = fb;
+      await fsM.deleteDoc(fsM.doc(db, "users", user.uid, "timers", t.id)).catch(()=>{});
     }
   }
 }
@@ -628,6 +702,11 @@ async function onSignedIn(){
     alarms = snap.docs.map(d=>({ id:d.id, ...d.data() }));
     alarms.sort((a,b)=> (a.time||"").localeCompare(b.time||""));
     renderAlarms();
+  }));
+  unsubs.push(fsM.onSnapshot(r.timersCol, (snap)=>{
+    timers = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    timers.sort((a,b)=> (a.endsAtMs||0) - (b.endsAtMs||0));
+    renderTimers();
   }));
   unsubs.push(fsM.onSnapshot(r.stateDoc, (snap)=>{
     const prev = state;
@@ -695,6 +774,39 @@ function renderAlarms(){
     el.appendChild(row);
   }
 }
+function fmtRemain(ms){
+  const s = Math.ceil(ms/1000);
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60;
+  return h > 0 ? h + ":" + pad(m) + ":" + pad(ss) : m + ":" + pad(ss);
+}
+function durationText(durationMs){
+  const total = Number(durationMs) || 0;
+  const h = Math.floor(total/3600000), m = Math.floor(total%3600000/60000);
+  return h + ":" + pad(m);
+}
+function renderTimers(){
+  const el = $("timerList");
+  if(!el) return;
+  if(!timers.length){ el.innerHTML = '<p class="sub">タイマーはありません。</p>'; return; }
+  el.innerHTML = "";
+  const now = nowSrv();
+  for(const t of timers){
+    const row = document.createElement("div"); row.className = "alarm";
+    const tm = document.createElement("div"); tm.className = "time"; tm.id = "timerRemain-" + t.id;
+    tm.style.fontSize = "24px";
+    tm.textContent = (t.endsAtMs - now) > 0 ? fmtRemain(t.endsAtMs - now) : "⏰ 終了";
+    const meta = document.createElement("div"); meta.className = "meta";
+    const lab = document.createElement("div"); lab.className = "label"; lab.textContent = t.label || "タイマー";
+    const dys = document.createElement("div"); dys.className = "days";
+    dys.textContent = durationText(t.durationMs) + " のタイマー（" + fmtClock(t.endsAtMs||now).slice(0,5) + " 終了）";
+    meta.append(lab, dys);
+    const del = document.createElement("button"); del.className = "iconbtn"; del.textContent = "削除";
+    del.addEventListener("click", async ()=>{ if(!confirm("このタイマーを削除しますか？")) return;
+      const { fsM, db } = fb; await fsM.deleteDoc(fsM.doc(db,"users",user.uid,"timers",t.id)); });
+    row.append(tm, meta, del);
+    el.appendChild(row);
+  }
+}
 function renderDevices(){
   const el = $("deviceList");
   if(!el) return;
@@ -736,6 +848,28 @@ $("settingsBtn").addEventListener("click", openSettings);
 $("closeSettingsBtn").addEventListener("click", closeSettings);
 $("settingsModal").addEventListener("click", (e)=>{ if(e.target === $("settingsModal")) closeSettings(); });
 $("openAddBtn").addEventListener("click", ()=> openAlarmModal(null));
+$("modalTime").addEventListener("change", syncDigitsFromTime);
+$("modalTimeDigits").addEventListener("input", ()=>{
+  const s = $("modalTimeDigits").value.replace(/\D/g, "");
+  if(s.length === 4){
+    const h = Number(s.slice(0,2)), m = Number(s.slice(2,4));
+    if(h <= 23 && m <= 59) $("modalTime").value = pad(h) + ":" + pad(m);
+  }
+});
+$("openTimerBtn").addEventListener("click", openTimerModal);
+$("closeTimerModalBtn").addEventListener("click", closeTimerModal);
+$("timerCancelBtn").addEventListener("click", closeTimerModal);
+$("timerModal").addEventListener("click", (e)=>{ if(e.target === $("timerModal")) closeTimerModal(); });
+$("timerSaveBtn").addEventListener("click", async ()=>{
+  const h = Math.max(0, Math.min(99, Number($("timerHours").value) || 0));
+  const m = Math.max(0, Math.min(59, Number($("timerMinutes").value) || 0));
+  const total = h*3600000 + m*60000;
+  if(total <= 0){ alert("時間と分を入れてください"); return; }
+  const label = $("timerLabel").value.trim();
+  const { fsM } = fb; const r = refs();
+  await fsM.addDoc(r.timersCol, { label, hours:h, minutes:m, durationMs: total, endsAtMs: nowSrv()+total, createdBy: deviceName||"端末", createdAt: fsM.serverTimestamp() });
+  closeTimerModal();
+});
 $("closeAlarmModalBtn").addEventListener("click", closeAlarmModal);
 $("modalCancelBtn").addEventListener("click", closeAlarmModal);
 $("alarmModal").addEventListener("click", (e)=>{ if(e.target === $("alarmModal")) closeAlarmModal(); });
