@@ -69,6 +69,18 @@
   .header-row{display:flex;align-items:flex-start;gap:8px}
   .header-row .titles{flex:1;min-width:0}
   #settingsBtn{flex:none;width:44px;height:44px;padding:0;font-size:20px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+  #holoBtn{flex:none;width:44px;height:44px;padding:0;font-size:20px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+  /* 設定タブ */
+  .tabs{display:flex;gap:8px;margin:8px 0 2px}
+  .tabs .tab{flex:1;padding:10px;font-size:14.5px;border-radius:12px}
+  .tabs .tab.active{background:var(--accent);color:#231600;font-weight:800;border-color:transparent}
+  /* ホログラム表示オーバーレイ */
+  #holoOverlay{position:fixed;inset:0;background:#000;z-index:60;display:none}
+  #holoOverlay.show{display:block}
+  #holoCanvasWrap{position:absolute;inset:0}
+  #holoCanvasWrap canvas{display:block;width:100%;height:100%;touch-action:none}
+  #holoCloseBtn{position:absolute;top:calc(10px + env(safe-area-inset-top));right:12px;width:46px;height:46px;padding:0;border-radius:50%;font-size:19px;background:rgba(20,24,40,.55);color:#fff;border:1px solid rgba(255,255,255,.35);z-index:2}
+  #holoStatus{position:absolute;left:0;right:0;bottom:calc(12px + env(safe-area-inset-bottom));text-align:center;color:#aab4cc;font-size:12.5px;z-index:2;pointer-events:none;padding:0 16px}
   /* モーダル共通 */
   .modal-overlay{position:fixed;inset:0;background:rgba(3,5,14,.72);z-index:40;display:none;align-items:flex-end;justify-content:center;padding:0}
   .modal-overlay.show{display:flex}
@@ -105,7 +117,10 @@
     <h1>⏰ 同期アラーム</h1>
     <div class="sub">複数端末で一斉に鳴って、1台で止めると全部止まる起床アラーム（Firebase版）</div>
   </div>
-  <button id="settingsBtn" aria-label="設定を開く" title="設定">⚙️</button>
+  <div class="row" style="flex:none;gap:8px;margin:0">
+    <button id="holoBtn" aria-label="キャラクター表示" title="キャラクター表示（全端末）">🧍</button>
+    <button id="settingsBtn" aria-label="設定を開く" title="設定">⚙️</button>
+  </div>
 </div>
 
 <!-- 初期設定 -->
@@ -175,6 +190,12 @@
       <button class="modal-close" id="closeSettingsBtn" aria-label="設定を閉じる">✕</button>
     </div>
 
+    <div class="tabs">
+      <button id="tabAlarmBtn" class="tab active">アラーム</button>
+      <button id="tabHoloBtn" class="tab">ホログラム</button>
+    </div>
+
+    <div id="tabAlarm">
     <h3>この端末</h3>
     <label>この端末の名前</label>
     <div class="row">
@@ -217,6 +238,27 @@
       <button id="reconfigBtn">Firebase設定を貼り直す</button>
       <button id="logoutBtn">ログアウト</button>
     </div>
+    </div><!-- /tabAlarm -->
+
+    <div id="tabHolo" class="hidden">
+    <h3>ホログラム表示</h3>
+    <label>頭足配置（全端末で同期）</label>
+    <div class="row">
+      <button id="holoAnchorFeet">足が中心</button>
+      <button id="holoAnchorHead">頭が中心</button>
+    </div>
+    <label>端末の平面配置位置（この端末のみ）</label>
+    <div class="daypick" id="holoPosPick">
+      <label><input type="radio" name="holoPos" value="front"><span>手前（正面）</span></label>
+      <label><input type="radio" name="holoPos" value="back"><span>奥（背面）</span></label>
+      <label><input type="radio" name="holoPos" value="right"><span>右側（右側面）</span></label>
+      <label><input type="radio" name="holoPos" value="left"><span>左側（左側面）</span></label>
+    </div>
+    <label>🧍 VRMモデル（全端末で同期）</label>
+    <select id="holoModelSel"><option value="">読み込み中…</option></select>
+    <p class="sub" id="holoModelHint">モデルを選ぶと各端末にダウンロードされます。</p>
+    <p class="sub">右上の「🧍 キャラクター表示」ボタンを押すと、全端末いっせいにフルスクリーン表示が始まります（手前＝正面／奥＝背面／右側＝右側面／左側＝左側面）。表示中のスワイプ（回転）・ピンチ（拡大縮小）と再生モーションは全端末で同期し、モーションは自動で切り替わります。表示中の ✕ で全端末いっせいに終了します。</p>
+    </div><!-- /tabHolo -->
   </div>
 </div>
 
@@ -279,6 +321,13 @@
   </div>
 </div>
 
+<!-- ホログラム表示オーバーレイ -->
+<div id="holoOverlay">
+  <div id="holoCanvasWrap"></div>
+  <button id="holoCloseBtn" aria-label="キャラクター表示を終了（全端末）">✕</button>
+  <div id="holoStatus"></div>
+</div>
+
 <!-- 鳴動オーバーレイ -->
 <div id="ringOverlay">
   <div class="test">テスト鳴動中</div>
@@ -291,10 +340,18 @@
 
 <div class="foot">同期アラーム（Firebase版）<br>アラームと状態はあなたのFirebaseプロジェクトに保存されます。</div>
 
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+  "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
+  "@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3/lib/three-vrm-animation.module.js"
+} }
+</script>
 <script src="firebase-config.js"></script>
 <script type="module">
 const $ = (id)=>document.getElementById(id);
-const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName", ntp:"syncAlarm.timeServer" };
+const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName", ntp:"syncAlarm.timeServer", holoPos:"syncAlarm.holoPosition", holoModel:"syncAlarm.holoModel", holoAnchor:"syncAlarm.holoAnchor" };
 const DAYNAMES = ["日","月","火","水","木","金","土"];
 
 let fb = null;          // {app, auth, db, fns...}
@@ -325,6 +382,24 @@ let bgmEntries = [];
 let musicAudio = null, musicUrl = null;
 function trackUrl(name){ return BGM_BASE + encodeURIComponent(name.normalize("NFC")); }
 
+// ホログラム表示（man_in_the_mirror の VRM/VRMA を全端末で同期表示する）
+const VRM_LIST_URL = "https://pluteus.github.io/man_in_the_mirror/vrm.txt";
+const VRM_BASE = "https://pluteus.github.io/man_in_the_mirror/vrm/";
+const VRMA_LIST_URL = "https://pluteus.github.io/man_in_the_mirror/vrma.txt";
+const VRMA_BASE = "https://pluteus.github.io/man_in_the_mirror/vrma/";
+const VRM_CACHE = "sync-alarm-vrm-v1";
+let holoModel = localStorage.getItem(LS.holoModel) || "";
+let holoAnchor = localStorage.getItem(LS.holoAnchor) === "head" ? "head" : "feet"; // 全端末で同期
+let holoPosition = localStorage.getItem(LS.holoPos) || "front"; // この端末のみ（front/back/right/left）
+let holoState = null;   // state/holo
+let vrmEntries = [], vrmaEntries = [];
+let H = null;           // 3Dエンジン（three読み込み後に生成）
+let holoShowing = false, holoDragging = false, holoAdvanceBusy = false;
+let viewRotY = 0, viewZoom = 1, viewDirty = false, viewWriteTimer = null;
+let holoLoadSeq = 0;
+function vrmUrl(name){ return VRM_BASE + encodeURIComponent(name.normalize("NFC")); }
+function vrmaUrl(name){ return VRMA_BASE + encodeURIComponent(name.normalize("NFC")); }
+
 const nowSrv = ()=> Date.now() + offsetMs;
 const pad = (n)=> String(n).padStart(2,"0");
 function fmtClock(ms){ const d=new Date(ms); return pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds()); }
@@ -351,7 +426,7 @@ function show(view){
 }
 
 /* ---------- モーダル ---------- */
-function openSettings(){ $("settingsModal").classList.add("show"); renderDevices(); updateTimeSyncState(); }
+function openSettings(){ $("settingsModal").classList.add("show"); renderDevices(); updateTimeSyncState(); updateHoloModelHint(); }
 function updateTimeSyncState(){
   const el = $("timeSyncState");
   if(!el) return;
@@ -561,6 +636,7 @@ function refs(){
     alarmsCol: fsM.collection(db, "users", uid, "alarms"),
     timersCol: fsM.collection(db, "users", uid, "timers"),
     stateDoc: fsM.doc(db, "users", uid, "state", "current"),
+    holoStateDoc: fsM.doc(db, "users", uid, "state", "holo"),
     settingsDoc: fsM.doc(db, "users", uid, "settings", "app"),
     devicesCol: fsM.collection(db, "users", uid, "devices"),
     pingDoc: fsM.doc(db, "users", uid, "meta", "ping"),
@@ -790,6 +866,26 @@ async function onSignedIn(){
       }
       lastSyncNonce = nonce;
     }
+    // ホログラム設定（頭足配置・VRMモデル）も全端末で同期する
+    const hm = data.holoModel;
+    if(typeof hm === "string" && hm !== holoModel){
+      holoModel = hm;
+      localStorage.setItem(LS.holoModel, hm);
+      renderHoloModelSel();
+      updateHoloModelHint();
+    }
+    const ha = data.holoAnchor;
+    if(typeof ha === "string" && (ha === "feet" || ha === "head") && ha !== holoAnchor){
+      holoAnchor = ha;
+      localStorage.setItem(LS.holoAnchor, ha);
+      renderHoloAnchor();
+      holoApplyCamera();
+    }
+  }));
+  // ホログラム表示状態（開始/終了・モーション・視点の同期）
+  unsubs.push(fsM.onSnapshot(r.holoStateDoc, (snap)=>{
+    holoState = snap.exists()? snap.data() : null;
+    handleHoloState();
   }));
   setInterval(schedulerTick, 250);
   schedulerTick();
@@ -1056,10 +1152,396 @@ $("syncTimeBtn").addEventListener("click", async ()=>{
   updateTimeSyncState();
 });
 
+/* ---------- ホログラム表示 ---------- */
+function holoSetStatus(t){ const el = $("holoStatus"); if(el) el.textContent = t || ""; }
+async function loadVrmList(){
+  try{
+    const res = await fetch(VRM_LIST_URL, { cache:"no-cache" });
+    if(!res.ok) throw new Error("vrm list");
+    const text = await res.text();
+    vrmEntries = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(l=>{
+      const p = l.split(",");
+      return { file:(p[0]||"").trim(), author:(p[1]||"").trim() };
+    }).filter(e=> e.file && !e.file.startsWith("#")); // #始まりは除外モデル
+  }catch(_){ vrmEntries = []; }
+  renderHoloModelSel();
+}
+async function loadVrmaList(){
+  try{
+    const res = await fetch(VRMA_LIST_URL, { cache:"no-cache" });
+    if(!res.ok) throw new Error("vrma list");
+    const text = await res.text();
+    vrmaEntries = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(l=>{
+      const p = l.split(",");
+      return { file:(p[0]||"").trim(), author:(p[1]||"").trim() };
+    }).filter(e=> e.file && !e.file.startsWith("#"));
+  }catch(_){ vrmaEntries = []; }
+}
+function renderHoloModelSel(){
+  const sel = $("holoModelSel");
+  if(!sel) return;
+  sel.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = ""; none.textContent = "（未選択：AliciaSolid.vrm）";
+  sel.appendChild(none);
+  for(const e of vrmEntries){
+    const o = document.createElement("option");
+    o.value = e.file;
+    o.textContent = e.file + (e.author? "（"+e.author+"）" : "");
+    sel.appendChild(o);
+  }
+  if(holoModel && !vrmEntries.some(e=>e.file===holoModel)){
+    const o = document.createElement("option");
+    o.value = holoModel; o.textContent = holoModel;
+    sel.appendChild(o);
+  }
+  sel.value = holoModel;
+}
+async function vrmCached(name){
+  try{ const c = await caches.open(VRM_CACHE); return !!(await c.match(vrmUrl(name))); }catch(_){ return false; }
+}
+async function downloadVrm(name){
+  try{
+    const url = vrmUrl(name);
+    const c = await caches.open(VRM_CACHE);
+    if(await c.match(url)) return true;
+    const res = await fetch(url);
+    if(!res.ok) return false;
+    await c.put(url, res);
+    return true;
+  }catch(_){ return false; }
+}
+async function updateHoloModelHint(){
+  const h = $("holoModelHint");
+  if(!h) return;
+  if(!holoModel){ h.textContent = "モデルを選ぶと各端末にダウンロードされます。未選択の場合は AliciaSolid.vrm を表示します。"; return; }
+  if(await vrmCached(holoModel)){ h.textContent = "「"+holoModel+"」はこの端末にダウンロード済みです。"; return; }
+  h.textContent = "「"+holoModel+"」をダウンロード中…";
+  const ok = await downloadVrm(holoModel);
+  h.textContent = ok? "「"+holoModel+"」はこの端末にダウンロード済みです。" : "「"+holoModel+"」のダウンロードに失敗しました。表示時に再試行します。";
+}
+function renderHoloAnchor(){
+  $("holoAnchorFeet").classList.toggle("primary", holoAnchor !== "head");
+  $("holoAnchorHead").classList.toggle("primary", holoAnchor === "head");
+}
+async function vrmBlobUrl(name){
+  try{
+    const c = await caches.open(VRM_CACHE);
+    const hit = await c.match(vrmUrl(name));
+    if(hit){ const blob = await hit.blob(); return URL.createObjectURL(blob); }
+  }catch(_){}
+  return vrmUrl(name);
+}
+
+async function ensureHoloEngine(){
+  if(H) return H;
+  const THREE = await import("three");
+  const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
+  const vrmM = await import("@pixiv/three-vrm");
+  const animM = await import("@pixiv/three-vrm-animation");
+  const renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x000000, 1);
+  $("holoCanvasWrap").appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+  const key = new THREE.DirectionalLight(0xffffff, 2.0); key.position.set(2, 4, 3); scene.add(key);
+  const fill = new THREE.DirectionalLight(0xaac4ff, 1.0); fill.position.set(-3, 2, -3); scene.add(fill);
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+  const vrmLoader = new GLTFLoader();
+  vrmLoader.register((parser)=> new vrmM.VRMLoaderPlugin(parser));
+  const vrmaLoader = new GLTFLoader();
+  vrmaLoader.register((parser)=> new animM.VRMAnimationLoaderPlugin(parser));
+  H = { THREE, renderer, scene, camera, vrmLoader, vrmaLoader, vrmM, animM,
+        vrm:null, mixer:null, action:null, modelName:"", motionName:"", height:1.6,
+        clock:new THREE.Clock(false), raf:0 };
+  holoAttachGestures(renderer.domElement);
+  return H;
+}
+function holoApplyCamera(){
+  const h = H; if(!h) return;
+  const wrap = $("holoCanvasWrap");
+  const w = wrap.clientWidth || window.innerWidth, ht = wrap.clientHeight || window.innerHeight;
+  h.renderer.setSize(w, ht, false);
+  h.camera.aspect = w / ht;
+  const anchorY = holoAnchor === "head" ? h.height : 0;
+  const vfov = 32 * Math.PI / 180;
+  // 中心（足または頭）から上下にキャラ全長ぶん見える距離
+  let dist = (h.height * 1.08) / Math.tan(vfov / 2);
+  // 縦長画面では横幅も確保する
+  const hfov = 2 * Math.atan(Math.tan(vfov / 2) * h.camera.aspect);
+  dist = Math.max(dist, (h.height * 0.45) / Math.tan(hfov / 2));
+  dist /= viewZoom;
+  const dirs = { front:[0,0,1], back:[0,0,-1], right:[1,0,0], left:[-1,0,0] };
+  const d = dirs[holoPosition] || dirs.front;
+  h.camera.position.set(d[0]*dist, anchorY, d[2]*dist);
+  h.camera.lookAt(0, anchorY, 0);
+  h.camera.updateProjectionMatrix();
+}
+function holoApplyTransform(){
+  if(H && H.vrm) H.vrm.scene.rotation.y = viewRotY;
+  holoApplyCamera();
+}
+async function holoLoadModel(name){
+  const h = await ensureHoloEngine();
+  if(h.modelName === name && h.vrm) { holoApplyCamera(); return; }
+  const seq = ++holoLoadSeq;
+  holoSetStatus("モデル読み込み中… " + name);
+  const url = await vrmBlobUrl(name);
+  const gltf = await h.vrmLoader.loadAsync(url);
+  if(seq !== holoLoadSeq) return; // 途中で別のモデルに切り替わった
+  const vrm = gltf.userData.vrm;
+  if(!vrm) throw new Error("VRMとして読み込めませんでした");
+  if(h.vrm){ h.scene.remove(h.vrm.scene); try{ h.vrmM.VRMUtils.deepDispose(h.vrm.scene); }catch(_){} }
+  h.vrm = vrm; h.modelName = name; h.motionName = ""; h.action = null;
+  h.scene.add(vrm.scene);
+  const box = new h.THREE.Box3().setFromObject(vrm.scene);
+  h.height = Math.max(0.5, box.max.y - box.min.y);
+  h.mixer = new h.THREE.AnimationMixer(vrm.scene);
+  holoApplyTransform();
+  if(holoState && holoState.motion) await holoPlayMotion(holoState.motion, true);
+  holoSetStatus("");
+}
+async function holoPlayMotion(m, force){
+  const h = H; if(!h || !h.vrm || !m || !m.name) return;
+  if(h.motionName === m.name && h.action && !force){
+    const dur = h.action.getClip().duration;
+    if(dur > 0){
+      const phase = ((nowSrv() - (m.startedAtMs || nowSrv())) / 1000) % dur;
+      if(Math.abs(h.action.time - phase) > 0.35) h.action.time = phase;
+    }
+    return;
+  }
+  try{
+    const gltf = await h.vrmaLoader.loadAsync(vrmaUrl(m.name));
+    const anims = gltf.userData.vrmAnimations;
+    if(!anims || !anims.length) return;
+    const clip = h.animM.createVRMAnimationClip(anims[0], h.vrm);
+    if(h.action) h.action.stop();
+    const action = h.mixer.clipAction(clip);
+    action.reset();
+    action.setLoop(h.THREE.LoopRepeat, Infinity);
+    action.enabled = true;
+    action.play();
+    if(clip.duration > 0) action.time = Math.max(0, ((nowSrv() - (m.startedAtMs || nowSrv())) / 1000) % clip.duration);
+    h.action = action; h.motionName = m.name;
+    holoSetStatus("モーション：" + m.name.replace(/\.vrma$/i, ""));
+  }catch(_){ holoSetStatus("モーション読込エラー：" + m.name); }
+}
+async function holoAdvanceMotion(){
+  if(!fb || !user || !holoState || !holoState.active || !holoState.motion) return;
+  const seq = holoState.motion.seq || 0;
+  try{
+    const { fsM } = fb; const r = refs();
+    const snap = await fsM.getDoc(r.holoStateDoc);
+    if(!snap.exists()) return;
+    const latest = snap.data();
+    if(!latest.active || !latest.motion || (latest.motion.seq || 0) !== seq) return; // 他端末が先に進めた
+    if(!vrmaEntries.length) await loadVrmaList();
+    if(!vrmaEntries.length) return;
+    let next = latest.motion.name;
+    for(let i = 0; i < 6 && vrmaEntries.length > 1 && next === latest.motion.name; i++){
+      next = vrmaEntries[Math.floor(Math.random() * vrmaEntries.length)].file;
+    }
+    if(next === latest.motion.name) return;
+    const durMs = (H && H.action) ? H.action.getClip().duration * 1000 : 0;
+    const startedAtMs = durMs > 0 ? (latest.motion.startedAtMs || nowSrv()) + durMs : nowSrv();
+    await fsM.setDoc(r.holoStateDoc, { motion:{ name: next, startedAtMs: startedAtMs, seq: seq + 1 } }, { merge:true });
+  }catch(_){}
+}
+function holoLoop(){
+  if(!holoShowing || !H) return;
+  const h = H;
+  const dt = Math.min(0.05, h.clock.getDelta());
+  if(h.mixer) h.mixer.update(dt);
+  if(h.vrm) h.vrm.update(dt);
+  // モーションの位相ずれ補正と、終わり際の自動切り替え
+  if(holoState && holoState.motion && h.action){
+    const dur = h.action.getClip().duration;
+    if(dur > 0){
+      const elapsed = (nowSrv() - (holoState.motion.startedAtMs || nowSrv())) / 1000;
+      const phase = elapsed % dur;
+      if(Math.abs(h.action.time - phase) > 0.4) h.action.time = phase;
+      if(elapsed > dur + 0.12 && !holoAdvanceBusy){
+        holoAdvanceBusy = true;
+        holoAdvanceMotion().finally(()=>{ setTimeout(()=>{ holoAdvanceBusy = false; }, 1500); });
+      }
+    }
+  }
+  h.renderer.render(h.scene, h.camera);
+  h.raf = requestAnimationFrame(holoLoop);
+}
+async function holoEnter(){
+  if(holoShowing){
+    if(holoState && holoState.model) holoLoadModel(holoState.model).catch(()=>{});
+    if(holoState && holoState.motion) holoPlayMotion(holoState.motion, false);
+    return;
+  }
+  holoShowing = true;
+  $("holoOverlay").classList.add("show");
+  try{ await document.documentElement.requestFullscreen(); }catch(_){}
+  holoSetStatus("読み込み中…");
+  try{
+    await ensureHoloEngine();
+    const model = (holoState && holoState.model) || holoModel || "AliciaSolid.vrm";
+    await holoLoadModel(model);
+    if(holoState && holoState.motion) await holoPlayMotion(holoState.motion, true);
+    holoApplyCamera();
+    H.clock.start();
+    H.raf = requestAnimationFrame(holoLoop);
+  }catch(e){
+    holoSetStatus("表示の初期化に失敗しました：" + (e && e.message || e));
+  }
+}
+function holoExit(){
+  if(!holoShowing) return;
+  holoShowing = false;
+  $("holoOverlay").classList.remove("show");
+  if(H && H.raf) cancelAnimationFrame(H.raf);
+  if(document.fullscreenElement){ document.exitFullscreen().catch(()=>{}); }
+}
+function handleHoloState(){
+  const s = holoState;
+  if(s && s.active){
+    // 視点（回転・ズーム）の同期：他端末の操作を反映する（自分が操作中は除く）
+    if(s.view && s.viewBy !== deviceId && !holoDragging){
+      viewRotY = typeof s.view.rotY === "number" ? s.view.rotY : 0;
+      viewZoom = typeof s.view.zoom === "number" ? s.view.zoom : 1;
+      holoApplyTransform();
+    }
+    if(!holoShowing){ holoEnter(); return; }
+    if(s.model && H && s.model !== H.modelName) holoLoadModel(s.model).catch(()=>{});
+    if(s.motion) holoPlayMotion(s.motion, false);
+  } else {
+    if(holoShowing) holoExit();
+  }
+}
+function holoScheduleViewWrite(){
+  if(viewWriteTimer) return;
+  viewWriteTimer = setTimeout(async ()=>{
+    viewWriteTimer = null;
+    if(!viewDirty) return;
+    viewDirty = false;
+    if(!fb || !user) return;
+    try{
+      const { fsM } = fb; const r = refs();
+      await fsM.setDoc(r.holoStateDoc, { view:{ rotY: viewRotY, zoom: viewZoom }, viewBy: deviceId }, { merge:true });
+    }catch(_){}
+  }, 180);
+}
+function holoAttachGestures(el){
+  const pointers = new Map();
+  let lastDist = 0;
+  el.addEventListener("pointerdown", (e)=>{
+    pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+    holoDragging = true;
+    try{ el.setPointerCapture(e.pointerId); }catch(_){}
+  });
+  el.addEventListener("pointermove", (e)=>{
+    if(!pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+    if(pointers.size === 1){
+      viewRotY += (e.clientX - prev.x) * 0.012;
+      viewDirty = true; holoApplyTransform(); holoScheduleViewWrite();
+    } else if(pointers.size === 2){
+      const pts = [...pointers.values()];
+      const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      if(lastDist > 0 && d > 0){
+        viewZoom = Math.min(3, Math.max(0.4, viewZoom * (d / lastDist)));
+        viewDirty = true; holoApplyTransform(); holoScheduleViewWrite();
+      }
+      lastDist = d;
+    }
+  });
+  const end = (e)=>{
+    pointers.delete(e.pointerId);
+    if(pointers.size < 2) lastDist = 0;
+    if(pointers.size === 0){ holoDragging = false; if(viewDirty) holoScheduleViewWrite(); }
+  };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+}
+window.addEventListener("resize", ()=>{ if(holoShowing) holoApplyCamera(); });
+
+/* ---------- ホログラムUIのイベント ---------- */
+$("tabAlarmBtn").addEventListener("click", ()=>{
+  $("tabAlarmBtn").classList.add("active"); $("tabHoloBtn").classList.remove("active");
+  $("tabAlarm").classList.remove("hidden"); $("tabHolo").classList.add("hidden");
+});
+$("tabHoloBtn").addEventListener("click", ()=>{
+  $("tabHoloBtn").classList.add("active"); $("tabAlarmBtn").classList.remove("active");
+  $("tabHolo").classList.remove("hidden"); $("tabAlarm").classList.add("hidden");
+  updateHoloModelHint();
+});
+function writeHoloSettings(patch){
+  if(!fb || !user) return;
+  const { fsM } = fb; const r = refs();
+  fsM.setDoc(r.settingsDoc, { ...patch, holoUpdatedBy: deviceName || "端末" }, { merge:true }).catch(()=>{});
+}
+$("holoAnchorFeet").addEventListener("click", ()=>{
+  holoAnchor = "feet";
+  localStorage.setItem(LS.holoAnchor, holoAnchor);
+  renderHoloAnchor(); holoApplyCamera();
+  writeHoloSettings({ holoAnchor: holoAnchor });
+});
+$("holoAnchorHead").addEventListener("click", ()=>{
+  holoAnchor = "head";
+  localStorage.setItem(LS.holoAnchor, holoAnchor);
+  renderHoloAnchor(); holoApplyCamera();
+  writeHoloSettings({ holoAnchor: holoAnchor });
+});
+$("holoPosPick").addEventListener("change", (e)=>{
+  if(e.target && e.target.name === "holoPos"){
+    holoPosition = e.target.value;
+    localStorage.setItem(LS.holoPos, holoPosition);
+    holoApplyCamera();
+  }
+});
+$("holoModelSel").addEventListener("change", ()=>{
+  holoModel = $("holoModelSel").value;
+  localStorage.setItem(LS.holoModel, holoModel);
+  writeHoloSettings({ holoModel: holoModel });
+  updateHoloModelHint();
+  // 表示中なら全端末のモデルも切り替える
+  if(fb && user && holoState && holoState.active){
+    const { fsM } = fb; const r = refs();
+    fsM.setDoc(r.holoStateDoc, { model: holoModel || "AliciaSolid.vrm" }, { merge:true }).catch(()=>{});
+  }
+});
+$("holoBtn").addEventListener("click", async ()=>{
+  if(!fb || !user) return;
+  const { fsM } = fb; const r = refs();
+  if(!vrmaEntries.length) await loadVrmaList();
+  const first = vrmaEntries.length ? vrmaEntries[Math.floor(Math.random() * vrmaEntries.length)].file : "";
+  const model = holoModel || (vrmEntries.some(e=>e.file === "AliciaSolid.vrm") ? "AliciaSolid.vrm" : (vrmEntries[0] ? vrmEntries[0].file : "AliciaSolid.vrm"));
+  viewRotY = 0; viewZoom = 1;
+  await fsM.setDoc(r.holoStateDoc, {
+    active: true,
+    model: model,
+    motion: first ? { name: first, startedAtMs: nowSrv(), seq: 1 } : null,
+    view: { rotY: 0, zoom: 1 },
+    viewBy: deviceId,
+    startedBy: deviceName || "端末",
+    updatedAt: fsM.serverTimestamp()
+  }, { merge:true }).catch(()=>{});
+});
+$("holoCloseBtn").addEventListener("click", async ()=>{
+  if(fb && user){
+    const { fsM } = fb; const r = refs();
+    await fsM.setDoc(r.holoStateDoc, { active: false, stoppedBy: deviceName || "端末", updatedAt: fsM.serverTimestamp() }, { merge:true }).catch(()=>{});
+  }
+  holoExit(); // この端末は即終了（他端末は状態を見て終了する）
+});
+
 if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 if($("ntpSel")) $("ntpSel").value = timeServer;
 fillTimerSelects();
 loadBgmList();
+document.querySelectorAll('input[name="holoPos"]').forEach(x=>{ x.checked = (x.value === holoPosition); });
+renderHoloAnchor();
+loadVrmList();
+loadVrmaList();
 boot();
 </script>
 </body>
