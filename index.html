@@ -396,6 +396,7 @@ let vrmEntries = [], vrmaEntries = [];
 let H = null;           // 3Dエンジン（three読み込み後に生成）
 let holoShowing = false, holoDragging = false, holoAdvanceBusy = false;
 let viewRotY = 0, viewZoom = 1, viewDirty = false, viewWriteTimer = null;
+let viewPan = holoAnchor === "head" ? 1 : 0; // カメラ視点の上下位置（0=足元 … 1=頭。頭足配置で初期位置が決まる）
 let holoLoadSeq = 0;
 function vrmUrl(name){ return VRM_BASE + encodeURIComponent(name.normalize("NFC")); }
 function vrmaUrl(name){ return VRMA_BASE + encodeURIComponent(name.normalize("NFC")); }
@@ -879,6 +880,7 @@ async function onSignedIn(){
       holoAnchor = ha;
       localStorage.setItem(LS.holoAnchor, ha);
       renderHoloAnchor();
+      viewPan = holoAnchor === "head" ? 1 : 0; // 視点は新しい中心へ戻す
       holoApplyCamera();
     }
   }));
@@ -1264,7 +1266,7 @@ function holoApplyCamera(){
   const w = wrap.clientWidth || window.innerWidth, ht = wrap.clientHeight || window.innerHeight;
   h.renderer.setSize(w, ht, false);
   h.camera.aspect = w / ht;
-  const anchorY = holoAnchor === "head" ? h.height : 0;
+  const anchorY = viewPan * h.height; // 視点の高さ（足元0 … 頭1。上下スワイプで移動）
   const vfov = 32 * Math.PI / 180;
   // 中心（足または頭）から上下にキャラ全長ぶん見える距離
   let dist = (h.height * 1.08) / Math.tan(vfov / 2);
@@ -1272,6 +1274,7 @@ function holoApplyCamera(){
   const hfov = 2 * Math.atan(Math.tan(vfov / 2) * h.camera.aspect);
   dist = Math.max(dist, (h.height * 0.45) / Math.tan(hfov / 2));
   dist /= viewZoom;
+  h.visH = 2 * dist * Math.tan(vfov / 2); // 現在の見える範囲の高さ（上下スワイプの換算用）
   const dirs = { front:[0,0,1], back:[0,0,-1], right:[1,0,0], left:[-1,0,0] };
   const d = dirs[holoPosition] || dirs.front;
   h.camera.position.set(d[0]*dist, anchorY, d[2]*dist);
@@ -1407,6 +1410,7 @@ function handleHoloState(){
     if(s.view && s.viewBy !== deviceId && !holoDragging){
       viewRotY = typeof s.view.rotY === "number" ? s.view.rotY : 0;
       viewZoom = typeof s.view.zoom === "number" ? s.view.zoom : 1;
+      if(typeof s.view.pan === "number") viewPan = Math.min(1, Math.max(0, s.view.pan));
       holoApplyTransform();
     }
     if(!holoShowing){ holoEnter(); return; }
@@ -1425,7 +1429,7 @@ function holoScheduleViewWrite(){
     if(!fb || !user) return;
     try{
       const { fsM } = fb; const r = refs();
-      await fsM.setDoc(r.holoStateDoc, { view:{ rotY: viewRotY, zoom: viewZoom }, viewBy: deviceId }, { merge:true });
+      await fsM.setDoc(r.holoStateDoc, { view:{ rotY: viewRotY, zoom: viewZoom, pan: viewPan }, viewBy: deviceId }, { merge:true });
     }catch(_){}
   }, 180);
 }
@@ -1443,6 +1447,12 @@ function holoAttachGestures(el){
     pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
     if(pointers.size === 1){
       viewRotY += (e.clientX - prev.x) * 0.012;
+      // 上下スワイプ：カメラ視点を体の上下へ移動（足が中心なら下→上、頭が中心なら上→下）
+      if(H && H.height > 0){
+        const pxH = el.clientHeight || window.innerHeight;
+        const ratio = (H.visH || H.height * 2) / H.height;
+        viewPan = Math.min(1, Math.max(0, viewPan - ((e.clientY - prev.y) / pxH) * ratio));
+      }
       viewDirty = true; holoApplyTransform(); holoScheduleViewWrite();
     } else if(pointers.size === 2){
       const pts = [...pointers.values()];
@@ -1482,13 +1492,15 @@ function writeHoloSettings(patch){
 $("holoAnchorFeet").addEventListener("click", ()=>{
   holoAnchor = "feet";
   localStorage.setItem(LS.holoAnchor, holoAnchor);
-  renderHoloAnchor(); holoApplyCamera();
+  renderHoloAnchor();
+  viewPan = 0; viewDirty = true; holoApplyCamera(); holoScheduleViewWrite();
   writeHoloSettings({ holoAnchor: holoAnchor });
 });
 $("holoAnchorHead").addEventListener("click", ()=>{
   holoAnchor = "head";
   localStorage.setItem(LS.holoAnchor, holoAnchor);
-  renderHoloAnchor(); holoApplyCamera();
+  renderHoloAnchor();
+  viewPan = 1; viewDirty = true; holoApplyCamera(); holoScheduleViewWrite();
   writeHoloSettings({ holoAnchor: holoAnchor });
 });
 $("holoPosPick").addEventListener("change", (e)=>{
@@ -1516,11 +1528,12 @@ $("holoBtn").addEventListener("click", async ()=>{
   const first = vrmaEntries.length ? vrmaEntries[Math.floor(Math.random() * vrmaEntries.length)].file : "";
   const model = holoModel || (vrmEntries.some(e=>e.file === "AliciaSolid.vrm") ? "AliciaSolid.vrm" : (vrmEntries[0] ? vrmEntries[0].file : "AliciaSolid.vrm"));
   viewRotY = 0; viewZoom = 1;
+  viewPan = holoAnchor === "head" ? 1 : 0; // 視点は頭足配置の中心から始める
   await fsM.setDoc(r.holoStateDoc, {
     active: true,
     model: model,
     motion: first ? { name: first, startedAtMs: nowSrv(), seq: 1 } : null,
-    view: { rotY: 0, zoom: 1 },
+    view: { rotY: 0, zoom: 1, pan: viewPan },
     viewBy: deviceId,
     startedBy: deviceName || "端末",
     updatedAt: fsM.serverTimestamp()
