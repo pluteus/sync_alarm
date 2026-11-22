@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ヘルプ｜同期アラーム</title>
+<meta name="description" content="同期アラームの使い方ヘルプ：アラームとタイマーの同期、設定、ホログラム表示、正直な制約とトラブルシューティング">
+<meta name="theme-color" content="#0b1020">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<style>
+  :root{
+    --bg:#0b1020; --panel:#151b31; --panel2:#1c2440; --line:#2a3357;
+    --text:#eef1ff; --muted:#9aa5c9; --accent:#ffb020; --accent2:#ff7847;
+    --ok:#39d98a; --danger:#ff5470; --radius:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;}
+  body{max-width:640px;margin:0 auto;padding:16px 14px 48px;line-height:1.75}
+  h1{font-size:20px;margin:4px 0 2px}
+  h2{font-size:16px;margin:26px 0 8px;color:var(--accent)}
+  h3{font-size:14.5px;margin:18px 0 4px}
+  p,li{font-size:14px}
+  .sub{color:var(--muted);font-size:12.5px;line-height:1.6}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:6px 14px 10px;margin:12px 0}
+  .note{background:#2a2113;border:1px solid #5c4517;color:#ffe1a8;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.7;margin:12px 0}
+  a{color:var(--accent)}
+  .backlink{display:inline-block;margin:6px 0;padding:10px 18px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;color:var(--text);text-decoration:none;font-size:14px}
+  ul{padding-left:20px;margin:6px 0}
+  li{margin:4px 0}
+  b.k{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<a class="backlink" href="index.html">← アプリに戻る</a>
+
+<h1>⏰ 同期アラーム ヘルプ</h1>
+<p class="sub">複数端末で一斉に鳴って、1台で止めると全部止まる起床アラーム（Firebase版）の使い方です。</p>
+
+<h2>このアプリについて</h2>
+<div class="card">
+  <p>スマホやタブレットを何台も枕元に置いて、全部を同じ時刻に鳴らすためのアラームです。全端末で<b>同じGoogleアカウント</b>でログインすると、そのアカウントが同期グループになり、アラーム・タイマー・設定が自動でそろいます。ルームコードは要りません。</p>
+  <p>鳴動中にどれか1台で「止める」を押すと、鳴っている全端末が止まります。スヌーズ（5分）も全端末に連動します。</p>
+</div>
+
+<h2>基本の使い方</h2>
+<div class="card">
+  <h3>アラーム</h3>
+  <ul>
+    <li>「＋ アラームを追加」から追加します。追加画面のデフォルト時刻は<b>現在時刻</b>です</li>
+    <li>時刻はドラム（時計入力）のほか、<b>24時間制の数字4桁</b>（例：0730）でも入力できます</li>
+    <li>曜日を選ばなければ一回のみ、選べば毎週くり返しです</li>
+    <li><b>追加・編集して保存すると、そのアラームは自動で有効化</b>されます</li>
+    <li>一覧のスイッチで有効／無効の切り替え、編集・削除ができます</li>
+  </ul>
+  <h3>タイマー</h3>
+  <ul>
+    <li>「＋ タイマーを追加」から、時間：分を指定します（スピナーと数字4桁入力の両対応。例：0130＝1時間30分）</li>
+    <li>セットした瞬間から全端末で同じカウントダウンが始まり、同時に鳴ります</li>
+    <li>鳴動を止めた端末が、そのタイマーを一覧から削除します</li>
+  </ul>
+  <h3>テスト鳴動</h3>
+  <ul>
+    <li>「テスト鳴動（15秒・全端末）」で、全端末が15秒間鳴ります。音量や連携の確認に使ってください</li>
+  </ul>
+</div>
+
+<h2>設定（⚙️ アラームタブ）</h2>
+<div class="card">
+  <ul>
+    <li><b class="k">この端末の名前</b>：端末一覧や「○○が鳴らしました」の表示に使われます</li>
+    <li><b class="k">音：ON/OFF</b>：全端末で同期します。OFFにしてもバイブレーションは作動します（iPhoneはバイブ非対応）</li>
+    <li><b class="k">画面ON維持</b>：鳴動まで画面を消さないための設定です（デフォルトON推奨）</li>
+    <li><b class="k">鳴動曲</b>：全端末で同期します。曲を選ぶと各端末にダウンロードされ、鳴動時に再生されます。曲ファイルが見つからない端末ではデフォルトのビープ音が鳴ります</li>
+    <li><b class="k">時刻サーバー</b>：全端末で同期します。「時刻を同期（全端末）」を押すと、全端末がいっせいに時刻補正をし直します。なおブラウザ版（このPWA）は仕様上NTP（UDP）を直接使えないため、Firestoreのサーバー時刻で補正しています。Android版は選択したサーバーへ実際に問い合わせて補正します</li>
+    <li><b class="k">接続中の端末</b>：同じアカウントでログイン中の端末と、最終接続時刻が分かります</li>
+  </ul>
+</div>
+
+<h2>ホログラム表示（⚙️ ホログラムタブ）</h2>
+<div class="card">
+  <p>4台の端末を逆三角錐のアクリル板の周りに置いて、キャラクターの各側面を1台ずつ表示し、立体的に浮かび上がらせる機能です。</p>
+  <ul>
+    <li>まず各端末のホログラムタブで<b>「端末の平面配置位置」</b>を設定します（手前／奥／右側／左側。この設定だけは端末ごとです）</li>
+    <li><b class="k">頭足配置</b>（足が中心／頭が中心）と<b class="k">VRMモデル</b>は全端末で同期します。モデルを選ぶと各端末にダウンロードされます</li>
+    <li>右上の<b>「🧍」ボタン</b>を押すと、全端末いっせいにフルスクリーン表示が始まります（手前＝正面、奥＝背面、右側＝右側面、左側＝左側面）</li>
+    <li>モーションは全端末で位相を揃えて再生され、終わると自動で次のモーションに切り替わります</li>
+    <li>表示中の操作も全端末で同期します：<b>左右スワイプ＝回転</b>、<b>上下スワイプ＝視点の上下移動</b>（足が中心なら下→上、頭が中心なら上→下）、<b>ピンチ＝拡大縮小</b></li>
+    <li>表示中の右上の<b>「✕」</b>を押すと、全端末いっせいに表示が終了します</li>
+  </ul>
+</div>
+
+<h2>Android版について</h2>
+<div class="card">
+  <p>Androidにはネイティブ版アプリもあり、こちらは<b>アプリを閉じていても・スリープ中でも鳴ります</b>（AlarmManagerを使用）。他端末で追加したアラームは、最大15分間隔の定期同期か、アプリを開いたタイミングで取り込まれます。</p>
+  <p>端末によっては、メーカーの省電力設定で止められて鳴らないことがあります。その場合は端末の設定で「同期アラーム」について次を確認してください（⚙️設定の「自動起動・バックグラウンド許可（メーカー設定）」ボタンからも開けます）。</p>
+  <ul>
+    <li>Xiaomi/HyperOS等：アプリ情報→バッテリー使用量→「バックグラウンドアクティビティを許可」と「自動起動を許可」をON。または消費電力詳細→起動設定で「自動的に管理」をOFF、「自動起動」「バックグラウンドで実行」をON</li>
+    <li>OPPO等：アプリ情報→電源→バッテリーセーバー→「制限なし」</li>
+    <li>Samsung等：アプリ情報→アプリのバッテリー使用量→「バックグラウンドでの使用を許可」をON</li>
+  </ul>
+</div>
+
+<h2>正直な制約</h2>
+<div class="note">
+  <b>Webアプリ（PWA版）の仕様上、確実に鳴らせるのはアプリを開いている間だけです。</b>閉じている／スリープ中の端末ではOSに止められる場合があり、特にiPhoneはアプリを開いた状態が前提です。<br>
+  推奨：寝る前に全端末でこのアプリを開き、充電しながら「画面ON維持」をON、音量を上げておくこと。大事な朝は端末標準アラームの併用を推奨します。<br>
+  iPhone用のネイティブ版はありません（iPhoneはPWA版を使ってください）。
+</div>
+
+<h2>うまく鳴らないとき</h2>
+<div class="card">
+  <ul>
+    <li>端末の音量が上がっているか、音：ONになっているか確認してください</li>
+    <li>音はブラウザの決まりで、画面を一度タップするまでは出ません。ログインなどのタップで有効になります</li>
+    <li>PWA版はアプリを開いた状態にしてください（画面ON維持：ON＋充電推奨）</li>
+    <li>Android版で鳴らない場合は、上記のメーカー省電力設定を確認してください</li>
+    <li>端末同士の時刻がずれている気がするときは、⚙️設定の「時刻を同期（全端末）」を押してください</li>
+    <li>他の端末が一覧に出ないときは、全端末で同じGoogleアカウントにログインしているか確認してください</li>
+  </ul>
+</div>
+
+<p style="margin-top:28px"><a class="backlink" href="index.html">← アプリに戻る</a></p>
+
+</body>
+</html>
