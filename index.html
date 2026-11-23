@@ -78,6 +78,8 @@
   /* ホログラム表示オーバーレイ */
   #holoOverlay{position:fixed;inset:0;background:#000;z-index:60;display:none}
   #holoOverlay.show{display:block}
+  #holoBgVideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:none}
+  #holoOverlay.camo #holoBgVideo{display:block}
   #holoCanvasWrap{position:absolute;inset:0}
   #holoCanvasWrap canvas{display:block;width:100%;height:100%;touch-action:none}
   #holoCloseBtn{position:absolute;top:calc(10px + env(safe-area-inset-top));right:12px;width:46px;height:46px;padding:0;border-radius:50%;font-size:19px;background:rgba(20,24,40,.55);color:#fff;border:1px solid rgba(255,255,255,.35);z-index:2}
@@ -249,6 +251,12 @@
       <button id="holoAnchorFeet">足が中心</button>
       <button id="holoAnchorHead">頭が中心</button>
     </div>
+    <label>背景モード（全端末で同期）</label>
+    <div class="row">
+      <button id="holoBgBlack">黒背景（投影用）</button>
+      <button id="holoBgCamo">透過背景（光学迷彩）</button>
+    </div>
+    <p class="sub">透過背景では、四角柱などで向かい合った端末同士がインカメラ映像を送り合い、相手の映像を左右反転して背景に表示します。各端末でカメラの許可が必要です（表示中のみ使用します）。同じWi-Fi内での利用が前提です。</p>
     <label>端末の平面配置位置（この端末のみ）</label>
     <div class="daypick" id="holoPosPick">
       <label><input type="radio" name="holoPos" value="front"><span>手前（正面）</span></label>
@@ -325,6 +333,7 @@
 
 <!-- ホログラム表示オーバーレイ -->
 <div id="holoOverlay">
+  <video id="holoBgVideo" autoplay playsinline muted></video>
   <div id="holoCanvasWrap"></div>
   <button id="holoCloseBtn" aria-label="キャラクター表示を終了（全端末）">✕</button>
   <div id="holoStatus"></div>
@@ -353,7 +362,7 @@
 <script src="firebase-config.js"></script>
 <script type="module">
 const $ = (id)=>document.getElementById(id);
-const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName", ntp:"syncAlarm.timeServer", holoPos:"syncAlarm.holoPosition", holoModel:"syncAlarm.holoModel", holoAnchor:"syncAlarm.holoAnchor" };
+const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName", ntp:"syncAlarm.timeServer", holoPos:"syncAlarm.holoPosition", holoModel:"syncAlarm.holoModel", holoAnchor:"syncAlarm.holoAnchor", holoBg:"syncAlarm.holoBgMode" };
 const DAYNAMES = ["日","月","火","水","木","金","土"];
 
 let fb = null;          // {app, auth, db, fns...}
@@ -399,6 +408,8 @@ let H = null;           // 3Dエンジン（three読み込み後に生成）
 let holoShowing = false, holoDragging = false, holoAdvanceBusy = false;
 let viewRotY = 0, viewZoom = 1, viewDirty = false, viewWriteTimer = null;
 let viewPan = holoAnchor === "head" ? 1 : 0; // カメラ視点の上下位置（0=足元 … 1=頭。頭足配置で初期位置が決まる）
+let holoBgMode = localStorage.getItem(LS.holoBg) === "camo" ? "camo" : "black"; // 背景モード（全端末で同期）
+let camo = null, camoStarting = false; // 光学迷彩（WebRTC）の接続状態
 let holoLoadSeq = 0;
 function vrmUrl(name){ return VRM_BASE + encodeURIComponent(name.normalize("NFC")); }
 function vrmaUrl(name){ return VRMA_BASE + encodeURIComponent(name.normalize("NFC")); }
@@ -885,6 +896,12 @@ async function onSignedIn(){
       viewPan = holoAnchor === "head" ? 1 : 0; // 視点は新しい中心へ戻す
       holoApplyCamera();
     }
+    const hb = data.holoBgMode;
+    if(typeof hb === "string" && (hb === "camo" || hb === "black") && hb !== holoBgMode){
+      holoBgMode = hb;
+      localStorage.setItem(LS.holoBg, hb);
+      holoApplyBgMode();
+    }
   }));
   // ホログラム表示状態（開始/終了・モーション・視点の同期）
   unsubs.push(fsM.onSnapshot(r.holoStateDoc, (snap)=>{
@@ -1243,9 +1260,9 @@ async function ensureHoloEngine(){
   const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
   const vrmM = await import("@pixiv/three-vrm");
   const animM = await import("@pixiv/three-vrm-animation");
-  const renderer = new THREE.WebGLRenderer({ antialias:true });
+  const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setClearColor(0x000000, 1);
+  renderer.setClearColor(0x000000, holoBgMode === "camo" ? 0 : 1); // 透過背景では3D側を透明にする
   $("holoCanvasWrap").appendChild(renderer.domElement);
   const scene = new THREE.Scene();
   scene.add(new THREE.AmbientLight(0xffffff, 1.6));
@@ -1380,6 +1397,7 @@ async function holoEnter(){
   if(holoShowing){
     if(holoState && holoState.model) holoLoadModel(holoState.model).catch(()=>{});
     if(holoState && holoState.motion) holoPlayMotion(holoState.motion, false);
+    if(holoBgMode === "camo") holoCamoStart().catch(()=>{});
     return;
   }
   holoShowing = true;
@@ -1394,6 +1412,7 @@ async function holoEnter(){
     holoApplyCamera();
     H.clock.start();
     H.raf = requestAnimationFrame(holoLoop);
+    if(holoBgMode === "camo") holoCamoStart().catch(()=>{});
   }catch(e){
     holoSetStatus("表示の初期化に失敗しました：" + (e && e.message || e));
   }
@@ -1401,10 +1420,117 @@ async function holoEnter(){
 function holoExit(){
   if(!holoShowing) return;
   holoShowing = false;
+  holoCamoStop();
   $("holoOverlay").classList.remove("show");
   if(H && H.raf) cancelAnimationFrame(H.raf);
   if(document.fullscreenElement){ document.exitFullscreen().catch(()=>{}); }
 }
+/* ---------- 光学迷彩（透過背景：向かい側端末のインカメラ映像を背景にする） ---------- */
+function renderHoloBg(){
+  $("holoBgBlack").classList.toggle("primary", holoBgMode !== "camo");
+  $("holoBgCamo").classList.toggle("primary", holoBgMode === "camo");
+}
+function holoApplyBgMode(){
+  renderHoloBg();
+  $("holoOverlay").classList.toggle("camo", holoBgMode === "camo");
+  if(H) H.renderer.setClearColor(0x000000, holoBgMode === "camo" ? 0 : 1);
+  if(holoShowing){
+    if(holoBgMode === "camo") holoCamoStart().catch(()=>{});
+    else holoCamoStop();
+  }
+}
+async function holoCamoStart(){
+  const session = (holoState && holoState.session) || 0;
+  if(camo && camo.session !== session) holoCamoStop(); // 表示し直したら接続も作り直す
+  if(camo || camoStarting) return;
+  if(!fb || !user) return;
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof RTCPeerConnection === "undefined"){
+    holoSetStatus("この端末ではカメラが使えません（透過背景は使えません）");
+    return;
+  }
+  camoStarting = true;
+  try{
+    const pairMap = { front:"back", back:"front", right:"left", left:"right" };
+    const partner = pairMap[holoPosition] || "back";
+    const pairKey = [holoPosition, partner].sort().join("_");
+    const initiator = [holoPosition, partner].sort()[0] === holoPosition;
+    holoSetStatus("カメラ起動中…");
+    let localStream;
+    try{
+      localStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user" }, audio:false });
+    }catch(_){
+      holoSetStatus("カメラを許可してください（透過背景に必要です）");
+      return;
+    }
+    if(!holoShowing || holoBgMode !== "camo"){ localStream.getTracks().forEach(t=>t.stop()); return; }
+    const pc = new RTCPeerConnection({ iceServers:[{ urls:"stun:stun.l.google.com:19302" }] });
+    localStream.getTracks().forEach(t=> pc.addTrack(t, localStream));
+    pc.ontrack = (ev)=>{
+      const v = $("holoBgVideo");
+      if(v && ev.streams && ev.streams[0]){
+        v.srcObject = ev.streams[0];
+        v.play().catch(()=>{});
+        holoSetStatus("");
+      }
+    };
+    pc.onconnectionstatechange = ()=>{
+      if(pc.connectionState === "failed") holoSetStatus("相手端末と接続できませんでした（同じWi-Fiか確認してください）");
+    };
+    camo = { pc, localStream, session, unsubs: [], answered: false };
+    const { fsM } = fb;
+    const callDoc = fsM.doc(fb.db, "users", user.uid, "holoCalls", pairKey);
+    const iceCol = fsM.collection(fb.db, "users", user.uid, "holoCalls", pairKey, "ice");
+    pc.onicecandidate = (ev)=>{
+      if(ev.candidate) fsM.addDoc(iceCol, { by: deviceId, session: session, cand: ev.candidate.toJSON() }).catch(()=>{});
+    };
+    const seenIce = new Set();
+    camo.unsubs.push(fsM.onSnapshot(iceCol, (snap)=>{
+      snap.docChanges().forEach((ch)=>{
+        if(ch.type !== "added" || seenIce.has(ch.doc.id)) return;
+        seenIce.add(ch.doc.id);
+        const d = ch.doc.data();
+        if(d.by === deviceId || d.session !== session) return;
+        pc.addIceCandidate(d.cand).catch(()=>{});
+      });
+    }));
+    if(initiator){
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await fsM.setDoc(callDoc, { offer:{ type: offer.type, sdp: offer.sdp }, offerBy: deviceId, session: session });
+      camo.unsubs.push(fsM.onSnapshot(callDoc, async (snap)=>{
+        const d = snap.exists()? snap.data() : null;
+        if(d && d.session === session && d.answer && !pc.currentRemoteDescription){
+          await pc.setRemoteDescription(d.answer).catch(()=>{});
+        }
+      }));
+    } else {
+      camo.unsubs.push(fsM.onSnapshot(callDoc, async (snap)=>{
+        const d = snap.exists()? snap.data() : null;
+        if(!d || d.session !== session || !d.offer || camo.answered) return;
+        camo.answered = true;
+        await pc.setRemoteDescription(d.offer).catch(()=>{});
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await fsM.setDoc(callDoc, { answer:{ type: answer.type, sdp: answer.sdp }, answerBy: deviceId }, { merge:true });
+      }));
+    }
+    holoSetStatus("相手のカメラを待っています…");
+  }catch(e){
+    holoSetStatus("透過背景の開始に失敗しました：" + (e && e.message || e));
+  }finally{
+    camoStarting = false;
+  }
+}
+function holoCamoStop(){
+  if(!camo) return;
+  camo.unsubs.forEach(u=>{ try{ u(); }catch(_){} });
+  try{ camo.pc.close(); }catch(_){}
+  camo.localStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
+  camo = null;
+  const v = $("holoBgVideo");
+  if(v) v.srcObject = null;
+}
+
 function handleHoloState(){
   const s = holoState;
   if(s && s.active){
@@ -1510,7 +1636,21 @@ $("holoPosPick").addEventListener("change", (e)=>{
     holoPosition = e.target.value;
     localStorage.setItem(LS.holoPos, holoPosition);
     holoApplyCamera();
+    // 配置が変わると接続相手も変わるので、透過背景は接続し直す
+    if(holoShowing && camo){ holoCamoStop(); holoCamoStart().catch(()=>{}); }
   }
+});
+$("holoBgBlack").addEventListener("click", ()=>{
+  holoBgMode = "black";
+  localStorage.setItem(LS.holoBg, holoBgMode);
+  writeHoloSettings({ holoBgMode: holoBgMode });
+  holoApplyBgMode();
+});
+$("holoBgCamo").addEventListener("click", ()=>{
+  holoBgMode = "camo";
+  localStorage.setItem(LS.holoBg, holoBgMode);
+  writeHoloSettings({ holoBgMode: holoBgMode });
+  holoApplyBgMode();
 });
 $("holoModelSel").addEventListener("change", ()=>{
   holoModel = $("holoModelSel").value;
@@ -1537,6 +1677,7 @@ $("holoBtn").addEventListener("click", async ()=>{
     motion: first ? { name: first, startedAtMs: nowSrv(), seq: 1 } : null,
     view: { rotY: 0, zoom: 1, pan: viewPan },
     viewBy: deviceId,
+    session: Date.now(),
     startedBy: deviceName || "端末",
     updatedAt: fsM.serverTimestamp()
   }, { merge:true }).catch(()=>{});
@@ -1555,6 +1696,7 @@ fillTimerSelects();
 loadBgmList();
 document.querySelectorAll('input[name="holoPos"]').forEach(x=>{ x.checked = (x.value === holoPosition); });
 renderHoloAnchor();
+renderHoloBg();
 loadVrmList();
 loadVrmaList();
 boot();
