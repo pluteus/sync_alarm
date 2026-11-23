@@ -80,6 +80,10 @@
   #holoOverlay.show{display:block}
   #holoBgVideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:none}
   #holoOverlay.camo #holoBgVideo{display:block}
+  #holoCamoState{position:absolute;top:calc(10px + env(safe-area-inset-top));left:12px;z-index:2;display:none;
+    background:rgba(10,14,30,.72);border:1px solid var(--line);border-radius:10px;padding:6px 10px;
+    color:#cdd6f4;font-size:12px;pointer-events:none;max-width:75%}
+  #holoOverlay.camo #holoCamoState{display:block}
   #holoCanvasWrap{position:absolute;inset:0}
   #holoCanvasWrap canvas{display:block;width:100%;height:100%;touch-action:none}
   #holoCloseBtn{position:absolute;top:calc(10px + env(safe-area-inset-top));right:12px;width:46px;height:46px;padding:0;border-radius:50%;font-size:19px;background:rgba(20,24,40,.55);color:#fff;border:1px solid rgba(255,255,255,.35);z-index:2}
@@ -334,6 +338,7 @@
 <!-- ホログラム表示オーバーレイ -->
 <div id="holoOverlay">
   <video id="holoBgVideo" autoplay playsinline muted></video>
+  <div id="holoCamoState"></div>
   <div id="holoCanvasWrap"></div>
   <button id="holoCloseBtn" aria-label="キャラクター表示を終了（全端末）">✕</button>
   <div id="holoStatus"></div>
@@ -1439,13 +1444,18 @@ function holoApplyBgMode(){
     else holoCamoStop();
   }
 }
+function holoCamoStatus(text){
+  const el = $("holoCamoState");
+  if(el) el.textContent = text ? ("📷 透過背景：" + text) : "";
+}
+let camoRetrySession = 0; // 接続の自動リトライは1表示につき1回まで
 async function holoCamoStart(){
   const session = (holoState && holoState.session) || 0;
   if(camo && camo.session !== session) holoCamoStop(); // 表示し直したら接続も作り直す
   if(camo || camoStarting) return;
   if(!fb || !user) return;
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof RTCPeerConnection === "undefined"){
-    holoSetStatus("この端末ではカメラが使えません（透過背景は使えません）");
+    holoCamoStatus("この端末ではカメラが使えません");
     return;
   }
   camoStarting = true;
@@ -1454,29 +1464,52 @@ async function holoCamoStart(){
     const partner = pairMap[holoPosition] || "back";
     const pairKey = [holoPosition, partner].sort().join("_");
     const initiator = [holoPosition, partner].sort()[0] === holoPosition;
-    holoSetStatus("カメラ起動中…");
+    holoCamoStatus("カメラ起動中…");
     let localStream;
     try{
       localStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user" }, audio:false });
     }catch(_){
-      holoSetStatus("カメラを許可してください（透過背景に必要です）");
+      holoCamoStatus("カメラを許可してください");
       return;
     }
     if(!holoShowing || holoBgMode !== "camo"){ localStream.getTracks().forEach(t=>t.stop()); return; }
     const pc = new RTCPeerConnection({ iceServers:[{ urls:"stun:stun.l.google.com:19302" }] });
     localStream.getTracks().forEach(t=> pc.addTrack(t, localStream));
+    const conn = { pc, localStream, session, unsubs: [], answered: false, gotTrack: false, watchdog: 0 };
+    camo = conn;
+    // 相手の接続候補（ICE）は、相手の接続情報を受け取る前に届くと捨てられてしまうので、
+    // 受け取りが済むまでキューに貯めておき、済んだらまとめて流す（v12の黒画面の主因）
+    let remoteReady = false;
+    const pendingIce = [];
+    const addRemoteIce = (cand)=>{
+      if(remoteReady) pc.addIceCandidate(cand).catch(()=>{});
+      else pendingIce.push(cand);
+    };
+    const markRemoteReady = async ()=>{
+      remoteReady = true;
+      for(const c of pendingIce.splice(0)){ try{ await pc.addIceCandidate(c); }catch(_){ } }
+    };
     pc.ontrack = (ev)=>{
       const v = $("holoBgVideo");
       if(v && ev.streams && ev.streams[0]){
+        conn.gotTrack = true;
         v.srcObject = ev.streams[0];
         v.play().catch(()=>{});
-        holoSetStatus("");
+        holoCamoStatus("接続OK（相手のカメラ表示中）");
       }
     };
-    pc.onconnectionstatechange = ()=>{
-      if(pc.connectionState === "failed") holoSetStatus("相手端末と接続できませんでした（同じWi-Fiか確認してください）");
+    pc.oniceconnectionstatechange = ()=>{
+      const st = pc.iceConnectionState;
+      if(st === "connected" || st === "completed"){ if(!conn.gotTrack) holoCamoStatus("接続OK（映像の到着待ち）"); }
+      else if(st === "checking") holoCamoStatus("相手と接続中…");
+      else if(st === "failed"){
+        holoCamoStatus("接続できませんでした（同じWi-Fiか確認してください）");
+        if(camoRetrySession !== session){
+          camoRetrySession = session;
+          setTimeout(()=>{ if(holoShowing && holoBgMode === "camo" && camo === conn){ holoCamoStop(); holoCamoStart().catch(()=>{}); } }, 1200);
+        }
+      }
     };
-    camo = { pc, localStream, session, unsubs: [], answered: false };
     const { fsM } = fb;
     const callDoc = fsM.doc(fb.db, "users", user.uid, "holoCalls", pairKey);
     const iceCol = fsM.collection(fb.db, "users", user.uid, "holoCalls", pairKey, "ice");
@@ -1484,49 +1517,57 @@ async function holoCamoStart(){
       if(ev.candidate) fsM.addDoc(iceCol, { by: deviceId, session: session, cand: ev.candidate.toJSON() }).catch(()=>{});
     };
     const seenIce = new Set();
-    camo.unsubs.push(fsM.onSnapshot(iceCol, (snap)=>{
+    conn.unsubs.push(fsM.onSnapshot(iceCol, (snap)=>{
       snap.docChanges().forEach((ch)=>{
         if(ch.type !== "added" || seenIce.has(ch.doc.id)) return;
         seenIce.add(ch.doc.id);
         const d = ch.doc.data();
         if(d.by === deviceId || d.session !== session) return;
-        pc.addIceCandidate(d.cand).catch(()=>{});
+        addRemoteIce(d.cand);
       });
     }));
     if(initiator){
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await fsM.setDoc(callDoc, { offer:{ type: offer.type, sdp: offer.sdp }, offerBy: deviceId, session: session });
-      camo.unsubs.push(fsM.onSnapshot(callDoc, async (snap)=>{
+      conn.unsubs.push(fsM.onSnapshot(callDoc, async (snap)=>{
         const d = snap.exists()? snap.data() : null;
         if(d && d.session === session && d.answer && !pc.currentRemoteDescription){
-          await pc.setRemoteDescription(d.answer).catch(()=>{});
+          try{ await pc.setRemoteDescription(d.answer); await markRemoteReady(); }catch(_){ }
         }
       }));
     } else {
-      camo.unsubs.push(fsM.onSnapshot(callDoc, async (snap)=>{
+      conn.unsubs.push(fsM.onSnapshot(callDoc, async (snap)=>{
         const d = snap.exists()? snap.data() : null;
-        if(!d || d.session !== session || !d.offer || camo.answered) return;
-        camo.answered = true;
-        await pc.setRemoteDescription(d.offer).catch(()=>{});
+        if(!d || d.session !== session || !d.offer || conn.answered) return;
+        conn.answered = true;
+        try{ await pc.setRemoteDescription(d.offer); }catch(_){ return; }
+        await markRemoteReady();
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         await fsM.setDoc(callDoc, { answer:{ type: answer.type, sdp: answer.sdp }, answerBy: deviceId }, { merge:true });
       }));
     }
-    holoSetStatus("相手のカメラを待っています…");
+    holoCamoStatus("相手の応答を待っています…");
+    conn.watchdog = setTimeout(()=>{
+      if(camo === conn && !conn.gotTrack && pc.iceConnectionState !== "connected" && pc.iceConnectionState !== "completed"){
+        holoCamoStatus("相手の応答がありません（相手端末でも表示が始まっているか、同じWi-Fiか確認してください）");
+      }
+    }, 12000);
   }catch(e){
-    holoSetStatus("透過背景の開始に失敗しました：" + (e && e.message || e));
+    holoCamoStatus("開始に失敗しました：" + (e && e.message || e));
   }finally{
     camoStarting = false;
   }
 }
 function holoCamoStop(){
   if(!camo) return;
+  if(camo.watchdog) clearTimeout(camo.watchdog);
   camo.unsubs.forEach(u=>{ try{ u(); }catch(_){} });
   try{ camo.pc.close(); }catch(_){}
   camo.localStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
   camo = null;
+  holoCamoStatus("");
   const v = $("holoBgVideo");
   if(v) v.srcObject = null;
 }
