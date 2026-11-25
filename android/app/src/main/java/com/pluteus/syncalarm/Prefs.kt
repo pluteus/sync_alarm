@@ -11,6 +11,8 @@ object Prefs {
     private const val KEY_SOUND = "soundEnabled"
     private const val KEY_TRACK = "trackName"
     private const val KEY_TIME_SERVER = "timeServer"
+    private const val KEY_TIMER_H = "lastTimerHours"
+    private const val KEY_TIMER_M = "lastTimerMinutes"
     private const val KEY_TIME_OFFSET = "timeOffsetMs"
     private const val KEY_TIME_STATUS = "timeSyncStatus"
 
@@ -53,6 +55,15 @@ object Prefs {
 
     fun setTimeServer(ctx: Context, server: String) {
         sp(ctx).edit().putString(KEY_TIME_SERVER, server).apply()
+    }
+
+    /** タイマーの前回設定（次回追加時のデフォルト。全端末で同期する設定の端末側キャッシュ）。 */
+    fun lastTimerHours(ctx: Context): Int = sp(ctx).getInt(KEY_TIMER_H, 0)
+
+    fun lastTimerMinutes(ctx: Context): Int = sp(ctx).getInt(KEY_TIMER_M, 10)
+
+    fun setLastTimer(ctx: Context, h: Int, m: Int) {
+        sp(ctx).edit().putInt(KEY_TIMER_H, h).putInt(KEY_TIMER_M, m).apply()
     }
 
     /** 時刻のずれ（正しい時刻 − 端末時刻、ミリ秒）。TimeSync.calibrate が更新する。 */

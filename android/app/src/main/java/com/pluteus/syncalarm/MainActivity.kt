@@ -233,6 +233,13 @@ class MainActivity : AppCompatActivity() {
                     settingsTimeRefresh?.invoke()
                 }
             }
+            // タイマーの前回設定（次回追加時のデフォルト）も全端末で共有する
+            val ltH = snap.getLong("lastTimerHours")
+            val ltM = snap.getLong("lastTimerMinutes")
+            if (ltH != null && ltM != null &&
+                (ltH.toInt() != Prefs.lastTimerHours(this) || ltM.toInt() != Prefs.lastTimerMinutes(this))) {
+                Prefs.setLastTimer(this, ltH.toInt(), ltM.toInt())
+            }
             // 時刻の一斉同期リクエストを受けたら、この端末も補正し直す
             val syncReq = (snap.get("syncRequestedAt") as? Number)?.toLong()
             if (syncReq != null) {
@@ -342,12 +349,20 @@ class MainActivity : AppCompatActivity() {
             row.labelText.text = a.label.ifEmpty { "（ラベルなし）" }
             row.daysText.text = if (a.days.isNotEmpty())
                 a.days.sorted().joinToString(" ") { dayNames[it] } + " くり返し"
+            else if (a.isFinished) "一回のみ（終了）"
             else "一回のみ"
             row.enabledSwitch.isChecked = a.enabled
             row.enabledSwitch.setOnCheckedChangeListener { _, checked ->
                 val uid = Repo.uid() ?: return@setOnCheckedChangeListener
-                Repo.alarmsCol(uid)?.document(a.id)?.update("enabled", checked)
+                if (checked) {
+                    // 再び有効にしたら「終了」印も外す
+                    Repo.alarmsCol(uid)?.document(a.id)
+                        ?.update(mapOf("enabled" to true, "finishedAt" to FieldValue.delete()))
+                } else {
+                    Repo.alarmsCol(uid)?.document(a.id)?.update("enabled", false)
+                }
             }
+            row.editBtn.text = if (a.isFinished) "再使用" else "編集"
             row.editBtn.setOnClickListener { showAlarmDialog(a) }
             row.deleteBtn.setOnClickListener {
                 AlertDialog.Builder(this)
@@ -412,10 +427,11 @@ class MainActivity : AppCompatActivity() {
         val dlg = DialogTimerBinding.inflate(LayoutInflater.from(this))
         dlg.hoursPicker.minValue = 0
         dlg.hoursPicker.maxValue = 99
-        dlg.hoursPicker.value = 0
+        // デフォルトは前回設定した時間（全端末で共有）
+        dlg.hoursPicker.value = Prefs.lastTimerHours(this)
         dlg.minutesPicker.minValue = 0
         dlg.minutesPicker.maxValue = 59
-        dlg.minutesPicker.value = 10
+        dlg.minutesPicker.value = Prefs.lastTimerMinutes(this)
         // スピナーと4桁入力を相互に同期する（アラームの時刻入力と同じ方式）
         var guard = false
         fun syncDigits() {
@@ -459,6 +475,9 @@ class MainActivity : AppCompatActivity() {
                     return@setPositiveButton
                 }
                 val label = dlg.labelInput.text.toString().trim()
+                // 今回の時間を「前回の設定」として覚える（次回のデフォルトになる。全端末で共有）
+                Prefs.setLastTimer(this@MainActivity, h, m)
+                lifecycleScope.launch { Repo.writeLastTimer(uid, h, m) }
                 Repo.timersCol(uid)?.add(
                     mapOf(
                         "label" to label,
@@ -532,8 +551,8 @@ class MainActivity : AppCompatActivity() {
                 val days = dayBoxes.filter { it.first.isChecked }.map { it.second }
                 val col = Repo.alarmsCol(uid) ?: return@setPositiveButton
                 if (existing != null) {
-                    // 編集したら必ず有効化する
-                    col.document(existing.id).update(mapOf("time" to time, "label" to label, "days" to days, "enabled" to true))
+                    // 編集したら必ず有効化する（終了したアラームの再使用もこの経路。「終了」印も外す）
+                    col.document(existing.id).update(mapOf("time" to time, "label" to label, "days" to days, "enabled" to true, "finishedAt" to FieldValue.delete()))
                 } else {
                     col.add(
                         mapOf(

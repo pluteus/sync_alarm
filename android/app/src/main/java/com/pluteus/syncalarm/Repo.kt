@@ -139,7 +139,15 @@ object Repo {
         )
     }
 
-    /** 停止を全体へ知らせる。一回のみアラームは自動でOFFにする（PWA版 doStop と同じ）。 */
+    /** タイマーの前回設定（次回追加時のデフォルト。全端末で共有、PWA版と共通）。 */
+    suspend fun writeLastTimer(uid: String, h: Int, m: Int) {
+        settingsDoc(uid)?.set(
+            mapOf("lastTimerHours" to h, "lastTimerMinutes" to m),
+            com.google.firebase.firestore.SetOptions.merge()
+        )?.await()
+    }
+
+    /** 停止を全体へ知らせる。一回のみアラームは自動でOFFにし、「終了」印を付ける（PWA版 doStop と同じ）。 */
     suspend fun writeStop(uid: String, stoppedBy: String, alarmId: String?) {
         stateDoc(uid)?.set(
             mapOf(
@@ -157,7 +165,12 @@ object Repo {
                 if (doc != null && doc.exists()) {
                     val days = doc.get("days") as? List<*>
                     if (days.isNullOrEmpty()) {
-                        alarmsCol(uid)?.document(alarmId)?.update("enabled", false)?.await()
+                        alarmsCol(uid)?.document(alarmId)?.update(
+                            mapOf(
+                                "enabled" to false,
+                                "finishedAt" to System.currentTimeMillis()
+                            )
+                        )?.await()
                     }
                 }
             } catch (e: Exception) { /* OFF化に失敗しても停止自体は成立させる */ }

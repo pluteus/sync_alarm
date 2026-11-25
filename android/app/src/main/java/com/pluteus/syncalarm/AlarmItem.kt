@@ -13,9 +13,13 @@ data class AlarmItem(
     val time: String,
     val label: String,
     val days: List<Int>,
-    val enabled: Boolean
+    val enabled: Boolean,
+    val finishedAt: Long = 0
 ) {
     fun nextFire(fromMs: Long): Long? = nextFireMillis(time, days, fromMs)
+
+    /** 鳴り終わって自動でOFFになった一回のみアラーム（編集して再使用できる）。 */
+    val isFinished: Boolean get() = days.isEmpty() && !enabled && finishedAt > 0
 
     companion object {
         fun fromDoc(d: DocumentSnapshot): AlarmItem {
@@ -25,7 +29,8 @@ data class AlarmItem(
                 time = d.getString("time") ?: "07:00",
                 label = d.getString("label") ?: "",
                 days = daysRaw.mapNotNull { (it as? Number)?.toInt() },
-                enabled = d.getBoolean("enabled") ?: true
+                enabled = d.getBoolean("enabled") ?: true,
+                finishedAt = (d.get("finishedAt") as? Number)?.toLong() ?: 0
             )
         }
 
