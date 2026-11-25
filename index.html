@@ -367,7 +367,9 @@
 <script src="firebase-config.js"></script>
 <script type="module">
 const $ = (id)=>document.getElementById(id);
-const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName", ntp:"syncAlarm.timeServer", holoPos:"syncAlarm.holoPosition", holoModel:"syncAlarm.holoModel", holoAnchor:"syncAlarm.holoAnchor", holoBg:"syncAlarm.holoBgMode" };
+const LS = { cfg:"syncAlarm.fbConfig", devId:"syncAlarm.deviceId", devName:"syncAlarm.deviceName", fired:"syncAlarm.firedKeys", audio:"syncAlarm.audioEnabled", wake:"syncAlarm.wakeEnabled", track:"syncAlarm.trackName", ntp:"syncAlarm.timeServer", holoPos:"syncAlarm.holoPosition", holoModel:"syncAlarm.holoModel", holoAnchor:"syncAlarm.holoAnchor", holoBg:"syncAlarm.holoBgMode", timerLast:"syncAlarm.timerLast" };
+let lastTimerH = 0, lastTimerM = 10; // タイマー追加時のデフォルト（前回設定した時間を全端末で共有）
+try{ const tl = JSON.parse(localStorage.getItem(LS.timerLast) || "null"); if(tl && Number.isFinite(tl.h) && Number.isFinite(tl.m)){ lastTimerH = tl.h; lastTimerM = tl.m; } }catch(_){}
 const DAYNAMES = ["日","月","火","水","木","金","土"];
 
 let fb = null;          // {app, auth, db, fns...}
@@ -489,8 +491,9 @@ function syncTimerDigits(){
 }
 function openTimerModal(){
   fillTimerSelects();
-  $("timerHours").value = "0";
-  $("timerMinutes").value = "10";
+  // デフォルトは前回設定した時間（全端末で共有）
+  $("timerHours").value = String(lastTimerH);
+  $("timerMinutes").value = String(lastTimerM);
   $("timerLabel").value = "";
   syncTimerDigits();
   $("timerModal").classList.add("show");
@@ -770,12 +773,12 @@ async function doStop(auto){
   const wasAlarm = state && state.alarmId;
   stopRingUI();
   await writeState({ ringing:false, stoppedBy: auto? "（自動停止）" : (deviceName||"端末"), snoozeUntil:null, test:null });
-  // 一回のみアラームは止めた端末がOFFにする
+  // 一回のみアラームは止めた端末がOFFにし、「終了」印を付ける（編集して再使用できる）
   if(wasAlarm){
     const a = alarms.find(x=>x.id===wasAlarm);
     if(a && (!a.days || !a.days.length)){
       const { fsM, db } = fb;
-      await fsM.updateDoc(fsM.doc(db, "users", user.uid, "alarms", a.id), { enabled:false }).catch(()=>{});
+      await fsM.updateDoc(fsM.doc(db, "users", user.uid, "alarms", a.id), { enabled:false, finishedAt: nowSrv() }).catch(()=>{});
     }
     // タイマーは止めた端末が削除する（鳴り終わったら役目を終える）
     const t = timers.find(x=>x.id===wasAlarm);
@@ -907,6 +910,12 @@ async function onSignedIn(){
       localStorage.setItem(LS.holoBg, hb);
       holoApplyBgMode();
     }
+    // タイマーの前回設定（次回のデフォルト）も全端末で共有する
+    const lh = data.lastTimerHours, lm = data.lastTimerMinutes;
+    if(typeof lh === "number" && typeof lm === "number" && (lh !== lastTimerH || lm !== lastTimerM)){
+      lastTimerH = lh; lastTimerM = lm;
+      localStorage.setItem(LS.timerLast, JSON.stringify({ h: lh, m: lm }));
+    }
   }));
   // ホログラム表示状態（開始/終了・モーション・視点の同期）
   unsubs.push(fsM.onSnapshot(r.holoStateDoc, (snap)=>{
@@ -924,7 +933,8 @@ function renderAlarms(){
   el.innerHTML = "";
   for(const a of alarms){
     const row = document.createElement("div"); row.className = "alarm";
-    const daysText = (a.days && a.days.length)? a.days.slice().sort((x,y)=>x-y).map(d=>DAYNAMES[d]).join(" ") + " くり返し" : "一回のみ";
+    const finished = (!a.days || !a.days.length) && !a.enabled && !!a.finishedAt; // 鳴り終わった一回のみアラーム
+    const daysText = ((a.days && a.days.length)? a.days.slice().sort((x,y)=>x-y).map(d=>DAYNAMES[d]).join(" ") + " くり返し" : "一回のみ") + (finished ? "（終了）" : "");
     row.innerHTML = "";
     const t = document.createElement("div"); t.className="time"; t.textContent = a.time;
     const meta = document.createElement("div"); meta.className="meta";
@@ -934,10 +944,12 @@ function renderAlarms(){
     const sw = document.createElement("label"); sw.className="switch";
     const cb = document.createElement("input"); cb.type="checkbox"; cb.checked = !!a.enabled;
     cb.addEventListener("change", async ()=>{ const { fsM, db } = fb;
-      await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",a.id), { enabled: cb.checked }); });
+      const upd = { enabled: cb.checked };
+      if(cb.checked) upd.finishedAt = fsM.deleteField(); // 再び有効にしたら「終了」印を外す
+      await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",a.id), upd); });
     const sl = document.createElement("span"); sl.className="slider";
     sw.append(cb, sl);
-    const edit = document.createElement("button"); edit.className="iconbtn"; edit.textContent="編集";
+    const edit = document.createElement("button"); edit.className="iconbtn"; edit.textContent = finished ? "再使用" : "編集";
     edit.addEventListener("click", ()=> openAlarmModal(a));
     const del = document.createElement("button"); del.className="iconbtn"; del.textContent="削除";
     del.addEventListener("click", async ()=>{ if(!confirm("このアラームを削除しますか？")) return;
@@ -1049,6 +1061,10 @@ $("timerSaveBtn").addEventListener("click", async ()=>{
   const label = $("timerLabel").value.trim();
   const { fsM } = fb; const r = refs();
   await fsM.addDoc(r.timersCol, { label, hours:h, minutes:m, durationMs: total, endsAtMs: nowSrv()+total, createdBy: deviceName||"端末", createdAt: fsM.serverTimestamp() });
+  // 今回の時間を「前回の設定」として覚える（次回のデフォルトになる。全端末で共有）
+  lastTimerH = h; lastTimerM = m;
+  localStorage.setItem(LS.timerLast, JSON.stringify({ h, m }));
+  await fsM.setDoc(r.settingsDoc, { lastTimerHours: h, lastTimerMinutes: m }, { merge:true }).catch(()=>{});
   closeTimerModal();
 });
 $("closeAlarmModalBtn").addEventListener("click", closeAlarmModal);
@@ -1061,8 +1077,8 @@ $("modalSaveBtn").addEventListener("click", async ()=>{
   const days = [...document.querySelectorAll("#modalDays input:checked")].map(x=>Number(x.value));
   const { fsM, db } = fb;
   if(editingId){
-    // 編集したら必ず有効化する
-    await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",editingId), { time, label, days, enabled:true });
+    // 編集したら必ず有効化する（終了したアラームの再使用もこの経路。「終了」印も外す）
+    await fsM.updateDoc(fsM.doc(db,"users",user.uid,"alarms",editingId), { time, label, days, enabled:true, finishedAt: fsM.deleteField() });
   } else {
     const r = refs();
     await fsM.addDoc(r.alarmsCol, { time, label, days, enabled:true, createdAt: fsM.serverTimestamp() });
